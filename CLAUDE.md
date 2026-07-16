@@ -10,8 +10,9 @@ under incompatible licenses.
 ## Workflow
 
 - One branch + one PR per issue. Small, focused commits.
-- `main` is protected: CI (`secrets`, `frontend`, `rust`) must pass,
-  enforce_admins is on — no direct pushes, even for admins.
+- CI (`secrets`, `frontend`, `rust`) must be green before merge. Branch
+  protection can't be enforced on a free-plan private repo — treat it as
+  enforced anyway.
 - Board: GitHub Project "dockshell", columns Backlog → To Do → In Progress →
   In Review → Done. Move the issue as you work it.
 - Issues state the "why" in the body; keep that when editing scope.
