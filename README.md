@@ -61,3 +61,7 @@ cargo test -- --ignored         # + real OS-keyring roundtrip (local only)
   toolchain quirk). Consider backporting it.
 - **bollard 0.19** chosen over hand-rolled HTTP: it's the de-facto Rust
   Docker client and matches the reqwest-style async backend approach.
+- **Branch protection**: not enforceable on a free-plan private repo (GitHub
+  Pro feature — proxmox-desktop's works because it's public). Treat "CI
+  green before merge" as policy; enable real protection if the repo goes
+  public or the account upgrades.
