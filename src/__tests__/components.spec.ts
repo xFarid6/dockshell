@@ -174,4 +174,58 @@ describe("TaskLogPanel", () => {
       containerId: "def456",
     });
   });
+
+  it("ignores a stale listen() resolution when switching containers faster than the IPC round-trip (#16)", async () => {
+    const handlers = new Map<string, EventHandler>();
+    const resolvers = new Map<string, () => void>();
+    const unlistenFns = new Map<string, ReturnType<typeof vi.fn>>();
+
+    listen.mockImplementation((event: string, handler: EventHandler) => {
+      handlers.set(event, handler);
+      const stop = vi.fn();
+      unlistenFns.set(event, stop);
+      return new Promise((resolve) => {
+        resolvers.set(event, () => resolve(stop));
+      });
+    });
+
+    const w = mount(TaskLogPanel, {
+      props: { entries: [], connectionId: "c1", containerId: null },
+    });
+    await flushPromises();
+
+    // Switch b -> c before b's listen() has resolved (faster than the IPC
+    // round-trip), then let the resolutions arrive out of order: c first,
+    // b's stale registration afterwards.
+    await w.setProps({ containerId: "container-b" });
+    await flushPromises();
+    await w.setProps({ containerId: "container-c" });
+    await flushPromises();
+
+    resolvers.get("log-line:container-c")?.();
+    await flushPromises();
+    resolvers.get("log-line:container-b")?.();
+    await flushPromises();
+
+    // The stale (b) listener must tear itself down instead of being wired
+    // up as "the" active unlisten, and must not tear down c's.
+    expect(unlistenFns.get("log-line:container-b")).toHaveBeenCalledTimes(1);
+    expect(unlistenFns.get("log-line:container-c")).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith("stop_log_stream", {
+      containerId: "container-b",
+    });
+
+    // Even if a log line arrives on the stale handler, it must be dropped
+    // rather than appended to the current container's log.
+    handlers.get("log-line:container-b")?.({
+      payload: { stream: "stdout", message: "from-stale-b" },
+    });
+    handlers.get("log-line:container-c")?.({
+      payload: { stream: "stdout", message: "from-current-c" },
+    });
+    await flushPromises();
+
+    expect(w.text()).toContain("from-current-c");
+    expect(w.text()).not.toContain("from-stale-b");
+  });
 });

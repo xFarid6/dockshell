@@ -16,14 +16,25 @@ const props = defineProps<{
 const logLines = ref<LogLine[]>([]);
 let unlisten: UnlistenFn | null = null;
 
-async function subscribe(connectionId: string, containerId: string) {
-  logLines.value = [];
-  unlisten = await listen<LogLine>(`log-line:${containerId}`, (event) => {
+// Bumped on every container switch. subscribe() re-checks this after each
+// await so a listen()/startLogStream() call left over from a superseded
+// switch tears itself down instead of clobbering the current one (#16).
+let generation = 0;
+
+async function subscribe(connectionId: string, containerId: string, gen: number) {
+  const stop = await listen<LogLine>(`log-line:${containerId}`, (event) => {
+    if (gen !== generation) return;
     logLines.value.push(event.payload);
     if (logLines.value.length > MAX_LOG_LINES) {
       logLines.value.splice(0, logLines.value.length - MAX_LOG_LINES);
     }
   });
+  if (gen !== generation) {
+    stop();
+    await stopLogStream(containerId);
+    return;
+  }
+  unlisten = stop;
   await startLogStream(connectionId, containerId);
 }
 
@@ -38,13 +49,16 @@ async function unsubscribe(containerId: string) {
 watch(
   () => props.containerId,
   async (newId, oldId) => {
+    const gen = ++generation;
+    logLines.value = [];
     if (oldId) await unsubscribe(oldId);
-    if (newId && props.connectionId) await subscribe(props.connectionId, newId);
+    if (newId && props.connectionId) await subscribe(props.connectionId, newId, gen);
   },
   { immediate: true },
 );
 
 onUnmounted(() => {
+  generation++;
   if (props.containerId) unsubscribe(props.containerId);
 });
 </script>
