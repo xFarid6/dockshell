@@ -52,3 +52,21 @@ export const startLogStream = (connectionId: string, containerId: string) =>
 
 export const stopLogStream = (containerId: string) =>
   invoke<void>("stop_log_stream", { containerId });
+
+export type ExecShell = "/bin/sh" | "/bin/bash";
+
+/** Returns the exec ID: output arrives as `exec-output:{execId}` events. */
+export const startExec = (
+  connectionId: string,
+  containerId: string,
+  shell: ExecShell,
+) => invoke<string>("start_exec", { connectionId, containerId, shell });
+
+export const writeExecInput = (execId: string, data: string) =>
+  invoke<void>("write_exec_input", { execId, data });
+
+export const resizeExec = (execId: string, cols: number, rows: number) =>
+  invoke<void>("resize_exec", { execId, cols, rows });
+
+export const stopExec = (execId: string) =>
+  invoke<void>("stop_exec", { execId });

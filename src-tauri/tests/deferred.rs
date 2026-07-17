@@ -2,10 +2,6 @@
 //! implement it — visible via `cargo test -- --ignored --list`.
 
 #[test]
-#[ignore = "not implemented — exec-into-container terminal, see dockshell issue #2"]
-fn exec_shell_in_container() {}
-
-#[test]
 #[ignore = "not implemented — image management, see dockshell issue #3"]
 fn lists_pulls_and_removes_images() {}
 

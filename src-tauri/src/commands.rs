@@ -2,13 +2,16 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use bollard::Docker;
 use futures_util::StreamExt;
 use tauri::{async_runtime::JoinHandle, Emitter, Manager};
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::connections::{self, ConnectionInfo};
-use crate::docker::{self, ContainerInfo};
+use crate::docker::{self, ContainerInfo, ExecInput};
 
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -117,6 +120,112 @@ pub fn stop_log_stream(
     Ok(())
 }
 
+/// A running exec session: the engine client (for resize) and the stdin
+/// writer (for keystrokes), plus the output-forwarding task so closing the
+/// terminal tab can cancel it.
+struct ExecSession {
+    docker: Docker,
+    input: Arc<AsyncMutex<ExecInput>>,
+    task: JoinHandle<()>,
+}
+
+/// Tracks in-flight exec sessions by exec ID.
+#[derive(Default)]
+pub struct ExecSessions(Mutex<HashMap<String, ExecSession>>);
+
+fn cancel_exec_session(sessions: &ExecSessions, exec_id: &str) {
+    if let Some(session) = sessions.0.lock().unwrap().remove(exec_id) {
+        session.task.abort();
+    }
+}
+
+/// Exec `shell` into a running container with a TTY attached. Output arrives
+/// on the frontend as `exec-output:{execId}` events; the returned exec ID is
+/// the handle for subsequent input/resize/stop calls.
+#[tauri::command]
+pub async fn start_exec(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ExecSessions>,
+    connection_id: String,
+    container_id: String,
+    shell: String,
+) -> Result<String, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+
+    let (exec_id, mut output, input) = docker::start_exec(&client, &container_id, &shell).await?;
+
+    let event = format!("exec-output:{exec_id}");
+    let app_handle = app.clone();
+    let task = tauri::async_runtime::spawn(async move {
+        while let Some(item) = output.next().await {
+            match item {
+                Ok(chunk) => {
+                    let _ = app_handle.emit(&event, chunk);
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    state.0.lock().unwrap().insert(
+        exec_id.clone(),
+        ExecSession {
+            docker: client,
+            input: Arc::new(AsyncMutex::new(input)),
+            task,
+        },
+    );
+
+    Ok(exec_id)
+}
+
+/// Write keystrokes (or a paste) into an exec session's stdin.
+#[tauri::command]
+pub async fn write_exec_input(
+    state: tauri::State<'_, ExecSessions>,
+    exec_id: String,
+    data: String,
+) -> Result<(), String> {
+    let input = {
+        let sessions = state.0.lock().unwrap();
+        let session = sessions
+            .get(&exec_id)
+            .ok_or_else(|| format!("no exec session for {exec_id}"))?;
+        session.input.clone()
+    };
+    let mut input = input.lock().await;
+    input
+        .write_all(data.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    input.flush().await.map_err(|e| e.to_string())
+}
+
+/// Resize an exec session's TTY to match the frontend terminal's dimensions.
+#[tauri::command]
+pub async fn resize_exec(
+    state: tauri::State<'_, ExecSessions>,
+    exec_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    let docker = {
+        let sessions = state.0.lock().unwrap();
+        let session = sessions
+            .get(&exec_id)
+            .ok_or_else(|| format!("no exec session for {exec_id}"))?;
+        session.docker.clone()
+    };
+    docker::resize_exec(&docker, &exec_id, cols, rows).await
+}
+
+#[tauri::command]
+pub fn stop_exec(state: tauri::State<'_, ExecSessions>, exec_id: String) -> Result<(), String> {
+    cancel_exec_session(&state, &exec_id);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +258,40 @@ mod tests {
 
         // Second call: entry already gone, must not panic.
         cancel_log_stream(&streams, "c1");
+    }
+
+    fn dummy_exec_session() -> ExecSession {
+        ExecSession {
+            docker: Docker::connect_with_local_defaults().unwrap(),
+            input: Arc::new(AsyncMutex::new(Box::pin(tokio::io::sink()))),
+            task: tauri::async_runtime::spawn(async {
+                std::future::pending::<()>().await;
+            }),
+        }
+    }
+
+    /// Same idempotency guarantee as `stop_log_stream`: closing a terminal
+    /// tab that never started (or whose exec already ended) must not panic.
+    #[test]
+    fn cancel_exec_session_on_unknown_id_is_a_noop() {
+        let sessions = ExecSessions::default();
+        cancel_exec_session(&sessions, "never-started");
+        cancel_exec_session(&sessions, "never-started"); // still a no-op
+    }
+
+    #[tokio::test]
+    async fn cancel_exec_session_is_idempotent_after_a_real_session() {
+        let sessions = ExecSessions::default();
+        sessions
+            .0
+            .lock()
+            .unwrap()
+            .insert("e1".to_string(), dummy_exec_session());
+
+        cancel_exec_session(&sessions, "e1");
+        assert!(sessions.0.lock().unwrap().get("e1").is_none());
+
+        // Second call: entry already gone, must not panic.
+        cancel_exec_session(&sessions, "e1");
     }
 }

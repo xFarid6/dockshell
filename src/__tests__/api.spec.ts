@@ -9,9 +9,13 @@ import {
   containerAction,
   listConnections,
   listContainers,
+  resizeExec,
   saveConnection,
+  startExec,
   startLogStream,
+  stopExec,
   stopLogStream,
+  writeExecInput,
 } from "../api";
 
 describe("api wrappers", () => {
@@ -62,5 +66,37 @@ describe("api wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("stop_log_stream", {
       containerId: "abc",
     });
+  });
+
+  it("start_exec passes connection, container and shell", async () => {
+    invoke.mockResolvedValue("exec1");
+    await startExec("c1", "abc", "/bin/bash");
+    expect(invoke).toHaveBeenCalledWith("start_exec", {
+      connectionId: "c1",
+      containerId: "abc",
+      shell: "/bin/bash",
+    });
+  });
+
+  it("write_exec_input passes the exec id and data", async () => {
+    await writeExecInput("exec1", "ls\r");
+    expect(invoke).toHaveBeenCalledWith("write_exec_input", {
+      execId: "exec1",
+      data: "ls\r",
+    });
+  });
+
+  it("resize_exec passes the exec id and dimensions", async () => {
+    await resizeExec("exec1", 80, 24);
+    expect(invoke).toHaveBeenCalledWith("resize_exec", {
+      execId: "exec1",
+      cols: 80,
+      rows: 24,
+    });
+  });
+
+  it("stop_exec passes the exec id", async () => {
+    await stopExec("exec1");
+    expect(invoke).toHaveBeenCalledWith("stop_exec", { execId: "exec1" });
   });
 });

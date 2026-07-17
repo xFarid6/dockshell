@@ -14,6 +14,7 @@ import {
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
 import ContainerTable from "./components/ContainerTable.vue";
+import ExecTerminal from "./components/ExecTerminal.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
 
 const connections = ref<ConnectionInfo[]>([]);
@@ -23,6 +24,7 @@ const busy = ref(false);
 const error = ref("");
 const taskLog = ref<string[]>([]);
 const logsContainerId = ref<string | null>(null);
+const execContainerId = ref<string | null>(null);
 
 function logTask(msg: string) {
   taskLog.value.unshift(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -49,11 +51,16 @@ async function refreshContainers() {
 async function onSelect(id: string) {
   activeId.value = id;
   logsContainerId.value = null;
+  execContainerId.value = null;
   await refreshContainers();
 }
 
 function onLogs(containerId: string) {
   logsContainerId.value = logsContainerId.value === containerId ? null : containerId;
+}
+
+function onExec(containerId: string) {
+  execContainerId.value = execContainerId.value === containerId ? null : containerId;
 }
 
 async function onSave(info: ConnectionInfo, secret: string | undefined) {
@@ -68,6 +75,7 @@ async function onRemove(id: string) {
     activeId.value = null;
     containers.value = [];
     logsContainerId.value = null;
+    execContainerId.value = null;
   }
   await refreshConnections();
 }
@@ -135,6 +143,7 @@ onMounted(refreshConnections);
         :busy="busy"
         @action="onAction"
         @logs="onLogs"
+        @exec="onExec"
       />
       <p
         v-else
@@ -142,6 +151,12 @@ onMounted(refreshConnections);
       >
         Select or add a Docker host to get started.
       </p>
+      <ExecTerminal
+        v-if="activeId && execContainerId"
+        :connection-id="activeId"
+        :container-id="execContainerId"
+        class="exec-panel"
+      />
       <TaskLogPanel
         :entries="taskLog"
         :connection-id="activeId"
@@ -225,6 +240,11 @@ input {
 .main > .container-table,
 .main > table {
   flex: 1;
+}
+.exec-panel {
+  flex: 1;
+  min-height: 280px;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
 }
 .task-log-panel {
   margin-top: auto;

@@ -87,6 +87,27 @@ describe("ContainerTable", () => {
     await buttons[3].trigger("click"); // logs
     expect(w.emitted("logs")).toEqual([["abc123def456"]]);
   });
+
+  it("emits exec when the Shell button is clicked on a running container", async () => {
+    const w = mount(ContainerTable, {
+      props: { containers, busy: false },
+    });
+    const buttons = w.findAll("td.actions button");
+    expect(buttons[4].attributes("disabled")).toBeUndefined(); // running
+    await buttons[4].trigger("click"); // shell
+    expect(w.emitted("exec")).toEqual([["abc123def456"]]);
+  });
+
+  it("disables Shell for a stopped container", () => {
+    const w = mount(ContainerTable, {
+      props: {
+        containers: [{ ...containers[0], state: "exited" }],
+        busy: false,
+      },
+    });
+    const buttons = w.findAll("td.actions button");
+    expect(buttons[4].attributes("disabled")).toBeDefined();
+  });
 });
 
 describe("TaskLogPanel", () => {
