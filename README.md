@@ -40,6 +40,27 @@ a remote engine over TCP instead:
 - Plain-TCP (2375) is unauthenticated — LAN/dev only. TLS client-cert auth
   for remote hosts is issue #7.
 
+### Container logs
+
+Clicking **Logs** on a container row streams its stdout/stderr live into the
+task/log panel:
+
+- Backend: `start_log_stream` opens a bollard `logs()` call with `follow`
+  enabled, backfills the **last 500 lines** as tail, then keeps following new
+  output. Each demuxed line is emitted to the frontend as a
+  `log-line:{containerId}` Tauri event (`{ stream: "stdout" | "stderr", message }`).
+  Invalid UTF-8 in a log line is rendered lossily (`�`) rather than dropped or
+  panicking.
+- One follow task runs per container at a time — starting a new stream (or
+  calling `stop_log_stream`) aborts any stream already running for that
+  container, so switching containers or closing the panel can't leak
+  background tasks.
+- Frontend: `TaskLogPanel.vue` subscribes to the event on mount/container
+  change and unsubscribes (and calls `stop_log_stream`) on unmount or when
+  the selected container changes. Streamed lines are capped at **5,000
+  lines** client-side (oldest lines drop off) to keep the panel bounded on
+  long-running, chatty containers.
+
 ### Tests
 
 ```sh

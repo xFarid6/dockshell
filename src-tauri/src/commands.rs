@@ -68,8 +68,8 @@ pub async fn container_action(
 #[derive(Default)]
 pub struct LogStreams(Mutex<HashMap<String, JoinHandle<()>>>);
 
-fn cancel_log_stream(state: &tauri::State<'_, LogStreams>, container_id: &str) {
-    if let Some(handle) = state.0.lock().unwrap().remove(container_id) {
+fn cancel_log_stream(streams: &LogStreams, container_id: &str) {
+    if let Some(handle) = streams.0.lock().unwrap().remove(container_id) {
         handle.abort();
     }
 }
@@ -115,4 +115,39 @@ pub fn stop_log_stream(
 ) -> Result<(), String> {
     cancel_log_stream(&state, &container_id);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Stopping a container that never had a stream (or was already
+    /// stopped) must be a no-op, not a panic — the frontend calls
+    /// `stop_log_stream` unconditionally on unmount/container-switch even
+    /// when it never confirmed a stream was running.
+    #[test]
+    fn cancel_log_stream_on_unknown_container_is_a_noop() {
+        let streams = LogStreams::default();
+        cancel_log_stream(&streams, "never-started");
+        cancel_log_stream(&streams, "never-started"); // still a no-op
+    }
+
+    /// Calling stop twice in a row for a container that *was* streaming
+    /// aborts the task once and is harmless the second time (mirrors the
+    /// frontend's watch handler, which can fire stop for the same id more
+    /// than once in edge cases).
+    #[tokio::test]
+    async fn cancel_log_stream_is_idempotent_after_a_real_stream() {
+        let streams = LogStreams::default();
+        let handle = tauri::async_runtime::spawn(async {
+            std::future::pending::<()>().await;
+        });
+        streams.0.lock().unwrap().insert("c1".to_string(), handle);
+
+        cancel_log_stream(&streams, "c1");
+        assert!(streams.0.lock().unwrap().get("c1").is_none());
+
+        // Second call: entry already gone, must not panic.
+        cancel_log_stream(&streams, "c1");
+    }
 }

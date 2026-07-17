@@ -133,3 +133,36 @@ async fn streams_container_logs_from_engine_api() {
     assert_eq!(lines[1].stream, "stderr");
     assert_eq!(lines[1].message, "a warning");
 }
+
+/// A container can write arbitrary bytes to stdout (binary output, a
+/// truncated multi-byte UTF-8 sequence, etc.) — the log line must render as
+/// the lossy replacement character rather than dropping the line or
+/// panicking on the invalid sequence.
+#[tokio::test]
+async fn handles_invalid_utf8_in_log_message() {
+    let server = MockServer::start().await;
+
+    // 0xFF and 0xFE are never valid UTF-8 bytes on their own.
+    let body = log_frame(1, &[0xFF, 0xFE, b'o', b'k', b'\n']);
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/containers/abc123/logs$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let lines: Vec<_> = docker::stream_logs(&client, "abc123")
+        .take(1)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|line| line.unwrap())
+        .collect();
+
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].stream, "stdout");
+    // Invalid bytes become U+FFFD; the trailing "ok" survives intact.
+    assert!(lines[0].message.contains('\u{FFFD}'));
+    assert!(lines[0].message.ends_with("ok"));
+}
