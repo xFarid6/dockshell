@@ -9,6 +9,7 @@ defineProps<{
 defineEmits<{
   action: [containerId: string, action: ContainerAction];
   logs: [containerId: string];
+  exec: [containerId: string];
 }>();
 </script>
 
@@ -56,6 +57,12 @@ defineEmits<{
           </button>
           <button @click="$emit('logs', c.id)">
             Logs
+          </button>
+          <button
+            :disabled="c.state !== 'running'"
+            @click="$emit('exec', c.id)"
+          >
+            Shell
           </button>
         </td>
       </tr>

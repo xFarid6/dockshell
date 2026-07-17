@@ -3,7 +3,6 @@
 import { describe, test } from "vitest";
 
 describe("deferred features", () => {
-  test.todo("opens an exec terminal inside a container (issue #2)");
   test.todo("image list/pull/remove view (issue #3)");
   test.todo("volume management view (issue #4)");
   test.todo("network management view (issue #5)");

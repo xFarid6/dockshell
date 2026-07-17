@@ -1,14 +1,18 @@
 //! Thin wrapper around bollard: build a client from a saved connection and
 //! expose the few operations the scaffold needs (list, start/stop/restart).
 
+use std::pin::Pin;
+
 use bollard::container::LogOutput;
+use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::query_parameters::{
-    ListContainersOptionsBuilder, LogsOptionsBuilder, RestartContainerOptions,
-    StartContainerOptions, StopContainerOptions,
+    ListContainersOptionsBuilder, LogsOptionsBuilder, ResizeExecOptionsBuilder,
+    RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
 use futures_util::{Stream, StreamExt};
 use serde::Serialize;
+use tokio::io::AsyncWrite;
 
 use crate::connections::ConnectionInfo;
 
@@ -133,4 +137,87 @@ pub fn stream_logs(
     docker
         .logs(container_id, Some(opts))
         .map(|item| item.map(LogLine::from).map_err(|e| e.to_string()))
+}
+
+/// The write half of an attached exec session — one keystroke/paste at a
+/// time from the frontend's xterm instance.
+pub type ExecInput = Pin<Box<dyn AsyncWrite + Send>>;
+
+/// A raw chunk of exec output, decoded as (possibly lossy) UTF-8.
+///
+/// Unlike [`LogLine`], this is *not* split or trimmed on newlines: with a TTY
+/// attached, bollard's decoder hands back whatever bytes it just read off the
+/// wire, and a terminal emulator needs those verbatim — including bare `\r`,
+/// mid-escape-sequence fragments, and prompts with no trailing newline at
+/// all — to render cursor movement, color, and line wrapping correctly.
+fn exec_output_text(output: LogOutput) -> String {
+    let bytes = match output {
+        LogOutput::StdOut { message }
+        | LogOutput::StdErr { message }
+        | LogOutput::StdIn { message }
+        | LogOutput::Console { message } => message,
+    };
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Create an exec instance running `shell` with a TTY attached, and start it.
+/// Returns the exec ID (used to key the session on the frontend/state side),
+/// a stream of raw output chunks, and the writer for stdin.
+pub async fn start_exec(
+    docker: &Docker,
+    container_id: &str,
+    shell: &str,
+) -> Result<
+    (
+        String,
+        Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>,
+        ExecInput,
+    ),
+    String,
+> {
+    let create_opts = CreateExecOptions {
+        attach_stdin: Some(true),
+        attach_stdout: Some(true),
+        attach_stderr: Some(true),
+        tty: Some(true),
+        cmd: Some(vec![shell.to_string()]),
+        ..Default::default()
+    };
+    let created = docker
+        .create_exec(container_id, create_opts)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let start_opts = StartExecOptions {
+        tty: true,
+        ..Default::default()
+    };
+    match docker
+        .start_exec(&created.id, Some(start_opts))
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        StartExecResults::Attached { output, input } => {
+            let chunks = output.map(|item| item.map(exec_output_text).map_err(|e| e.to_string()));
+            Ok((created.id, Box::pin(chunks), input))
+        }
+        StartExecResults::Detached => Err("exec started detached unexpectedly".to_string()),
+    }
+}
+
+/// Resize the TTY of a running exec session (in character cells).
+pub async fn resize_exec(
+    docker: &Docker,
+    exec_id: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    let opts = ResizeExecOptionsBuilder::new()
+        .w(cols as i32)
+        .h(rows as i32)
+        .build();
+    docker
+        .resize_exec(exec_id, opts)
+        .await
+        .map_err(|e| e.to_string())
 }
