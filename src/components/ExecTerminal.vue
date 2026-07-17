@@ -27,6 +27,13 @@ let execId: string | null = null;
 let unlisten: UnlistenFn | null = null;
 let pendingResize: { cols: number; rows: number } | null = null;
 
+// Bumped on every start() invocation. A superseded start() call (an
+// out-of-order startExec()/listen() resolution left over from a prior
+// container/connection/shell switch) re-checks this after each await and
+// tears itself down instead of clobbering the current session (mirrors
+// TaskLogPanel's #16 fix).
+let generation = 0;
+
 async function stop() {
   if (unlisten) {
     unlisten();
@@ -40,14 +47,26 @@ async function stop() {
 }
 
 async function start() {
+  const gen = ++generation;
   await stop();
   error.value = "";
   try {
     const id = await startExec(props.connectionId, props.containerId, shell.value);
-    execId = id;
-    unlisten = await listen<string>(`exec-output:${id}`, (event) => {
+    if (gen !== generation) {
+      await stopExec(id);
+      return;
+    }
+    const stopListen = await listen<string>(`exec-output:${id}`, (event) => {
+      if (gen !== generation) return;
       pane.value?.write(event.payload);
     });
+    if (gen !== generation) {
+      stopListen();
+      await stopExec(id);
+      return;
+    }
+    execId = id;
+    unlisten = stopListen;
     if (pendingResize) {
       await resizeExec(id, pendingResize.cols, pendingResize.rows);
     }
@@ -65,9 +84,16 @@ function onResize(cols: number, rows: number) {
   if (execId) void resizeExec(execId, cols, rows);
 }
 
-watch(shell, start, { immediate: true });
+watch(
+  [shell, () => props.connectionId, () => props.containerId],
+  start,
+  { immediate: true },
+);
 
-onUnmounted(stop);
+onUnmounted(() => {
+  generation++;
+  void stop();
+});
 </script>
 
 <template>
