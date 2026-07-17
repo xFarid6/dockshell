@@ -21,6 +21,11 @@ export interface ContainerInfo {
 
 export type ContainerAction = "start" | "stop" | "restart";
 
+export interface LogLine {
+  stream: string;
+  message: string;
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -41,3 +46,9 @@ export const containerAction = (
   containerId: string,
   action: ContainerAction,
 ) => invoke<void>("container_action", { connectionId, containerId, action });
+
+export const startLogStream = (connectionId: string, containerId: string) =>
+  invoke<void>("start_log_stream", { connectionId, containerId });
+
+export const stopLogStream = (containerId: string) =>
+  invoke<void>("stop_log_stream", { containerId });

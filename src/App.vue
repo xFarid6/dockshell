@@ -22,6 +22,7 @@ const containers = ref<ContainerInfo[]>([]);
 const busy = ref(false);
 const error = ref("");
 const taskLog = ref<string[]>([]);
+const logsContainerId = ref<string | null>(null);
 
 function logTask(msg: string) {
   taskLog.value.unshift(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -47,7 +48,12 @@ async function refreshContainers() {
 
 async function onSelect(id: string) {
   activeId.value = id;
+  logsContainerId.value = null;
   await refreshContainers();
+}
+
+function onLogs(containerId: string) {
+  logsContainerId.value = logsContainerId.value === containerId ? null : containerId;
 }
 
 async function onSave(info: ConnectionInfo, secret: string | undefined) {
@@ -61,6 +67,7 @@ async function onRemove(id: string) {
   if (activeId.value === id) {
     activeId.value = null;
     containers.value = [];
+    logsContainerId.value = null;
   }
   await refreshConnections();
 }
@@ -127,6 +134,7 @@ onMounted(refreshConnections);
         :containers="containers"
         :busy="busy"
         @action="onAction"
+        @logs="onLogs"
       />
       <p
         v-else
@@ -134,7 +142,11 @@ onMounted(refreshConnections);
       >
         Select or add a Docker host to get started.
       </p>
-      <TaskLogPanel :entries="taskLog" />
+      <TaskLogPanel
+        :entries="taskLog"
+        :connection-id="activeId"
+        :container-id="logsContainerId"
+      />
     </main>
   </div>
 </template>
