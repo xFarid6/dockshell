@@ -3,6 +3,7 @@
 
 use dockshell_lib::connections::ConnectionInfo;
 use dockshell_lib::docker;
+use futures_util::StreamExt;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -90,4 +91,45 @@ async fn ping_reports_engine_version() {
     let client = docker::client_for(&conn_for(&server)).unwrap();
     let msg = docker::ping(&client).await.unwrap();
     assert!(msg.contains("27.3.1"));
+}
+
+/// Docker's log endpoint multiplexes stdout/stderr with an 8-byte header per
+/// frame: [stream type, 0, 0, 0, big-endian u32 length], then that many
+/// payload bytes. See bollard's `NewlineLogOutputDecoder`.
+fn log_frame(stream_type: u8, payload: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(8 + payload.len());
+    buf.push(stream_type);
+    buf.extend_from_slice(&[0, 0, 0]);
+    buf.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    buf.extend_from_slice(payload);
+    buf
+}
+
+#[tokio::test]
+async fn streams_container_logs_from_engine_api() {
+    let server = MockServer::start().await;
+
+    let mut body = log_frame(1, b"starting up\n");
+    body.extend(log_frame(2, b"a warning\n"));
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/containers/abc123/logs$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let lines: Vec<_> = docker::stream_logs(&client, "abc123")
+        .take(2)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|line| line.unwrap())
+        .collect();
+
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0].stream, "stdout");
+    assert_eq!(lines[0].message, "starting up");
+    assert_eq!(lines[1].stream, "stderr");
+    assert_eq!(lines[1].message, "a warning");
 }

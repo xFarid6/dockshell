@@ -1,11 +1,13 @@
 //! Thin wrapper around bollard: build a client from a saved connection and
 //! expose the few operations the scaffold needs (list, start/stop/restart).
 
+use bollard::container::LogOutput;
 use bollard::query_parameters::{
-    ListContainersOptionsBuilder, RestartContainerOptions, StartContainerOptions,
-    StopContainerOptions,
+    ListContainersOptionsBuilder, LogsOptionsBuilder, RestartContainerOptions,
+    StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
+use futures_util::{Stream, StreamExt};
 use serde::Serialize;
 
 use crate::connections::ConnectionInfo;
@@ -90,4 +92,45 @@ pub async fn container_action(docker: &Docker, id: &str, action: &str) -> Result
             .map_err(|e| e.to_string()),
         other => Err(format!("unknown container action: {other}")),
     }
+}
+
+/// One line of container log output, tagged by which stream it came from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogLine {
+    pub stream: String,
+    pub message: String,
+}
+
+impl From<LogOutput> for LogLine {
+    fn from(output: LogOutput) -> Self {
+        let (stream, bytes) = match output {
+            LogOutput::StdOut { message } => ("stdout", message),
+            LogOutput::StdErr { message } => ("stderr", message),
+            LogOutput::StdIn { message } => ("stdin", message),
+            LogOutput::Console { message } => ("console", message),
+        };
+        LogLine {
+            stream: stream.to_string(),
+            message: String::from_utf8_lossy(&bytes)
+                .trim_end_matches('\n')
+                .to_string(),
+        }
+    }
+}
+
+/// Follow a container's stdout/stderr, backfilling the last 500 lines first.
+pub fn stream_logs(
+    docker: &Docker,
+    container_id: &str,
+) -> impl Stream<Item = Result<LogLine, String>> + Send {
+    let opts = LogsOptionsBuilder::new()
+        .follow(true)
+        .stdout(true)
+        .stderr(true)
+        .tail("500")
+        .build();
+    docker
+        .logs(container_id, Some(opts))
+        .map(|item| item.map(LogLine::from).map_err(|e| e.to_string()))
 }

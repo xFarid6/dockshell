@@ -8,6 +8,7 @@ defineProps<{
 
 defineEmits<{
   action: [containerId: string, action: ContainerAction];
+  logs: [containerId: string];
 }>();
 </script>
 
@@ -52,6 +53,9 @@ defineEmits<{
             @click="$emit('action', c.id, 'restart')"
           >
             Restart
+          </button>
+          <button @click="$emit('logs', c.id)">
+            Logs
           </button>
         </td>
       </tr>

@@ -16,6 +16,12 @@ jobs:
   secrets:
     name: secrets
     runs-on: ubuntu-latest
+    # gitleaks-action lists the PR's commits via the API to scope an
+    # incremental scan; the repo's default (read-only, contents-only)
+    # GITHUB_TOKEN doesn't include that scope, so it 403s on every PR run.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:

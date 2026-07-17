@@ -10,6 +10,8 @@ import {
   listConnections,
   listContainers,
   saveConnection,
+  startLogStream,
+  stopLogStream,
 } from "../api";
 
 describe("api wrappers", () => {
@@ -44,6 +46,21 @@ describe("api wrappers", () => {
       connectionId: "c1",
       containerId: "abc",
       action: "restart",
+    });
+  });
+
+  it("start_log_stream passes connection and container ids", async () => {
+    await startLogStream("c1", "abc");
+    expect(invoke).toHaveBeenCalledWith("start_log_stream", {
+      connectionId: "c1",
+      containerId: "abc",
+    });
+  });
+
+  it("stop_log_stream passes the container id", async () => {
+    await stopLogStream("abc");
+    expect(invoke).toHaveBeenCalledWith("stop_log_stream", {
+      containerId: "abc",
     });
   });
 });

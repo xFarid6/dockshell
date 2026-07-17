@@ -35,3 +35,12 @@ under incompatible licenses.
   `test.todo(...)` / `#[ignore = "...issue #N"]` stub naming its issue.
 - Lint gates: `cargo fmt --check`, `cargo clippy -- -D warnings`,
   `pnpm lint`, `pnpm typecheck`.
+
+## Current sprint (2026-07-17 → 2026-07-30)
+
+Full plan: Obsidian vault → `Claude-understandings/ship-and-sell-plan.md`
+(strategy) + `01-two-week-sprint.md` (timeline). dockshell's role this sprint:
+**agent-maintained, no release pressure** — close 3–4 issues from the board
+(container logs and exec are the priority), keep CI green. Public beta targeted
+~September, launch on Lemon Squeezy at €5/mo per
+`03-monetization-decisions.md`. Don't start release/licensing work yet.

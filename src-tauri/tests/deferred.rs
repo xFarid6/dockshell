@@ -2,10 +2,6 @@
 //! implement it — visible via `cargo test -- --ignored --list`.
 
 #[test]
-#[ignore = "not implemented — container log streaming, see dockshell issue #1"]
-fn streams_container_logs() {}
-
-#[test]
 #[ignore = "not implemented — exec-into-container terminal, see dockshell issue #2"]
 fn exec_shell_in_container() {}
 
