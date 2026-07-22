@@ -8,10 +8,10 @@ use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::models::{ContainerCreateBody, HostConfig, PortBinding as ModelPortBinding};
 use bollard::query_parameters::{
-    CreateContainerOptionsBuilder, CreateImageOptionsBuilder, InspectContainerOptions,
-    ListContainersOptionsBuilder, ListImagesOptionsBuilder, LogsOptionsBuilder,
-    RemoveImageOptionsBuilder, ResizeExecOptionsBuilder, RestartContainerOptions,
-    StartContainerOptions, StopContainerOptions,
+    CreateContainerOptionsBuilder, CreateImageOptionsBuilder, EventsOptionsBuilder,
+    InspectContainerOptions, ListContainersOptionsBuilder, ListImagesOptionsBuilder,
+    LogsOptionsBuilder, RemoveImageOptionsBuilder, ResizeExecOptionsBuilder,
+    RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
 use futures_util::{Stream, StreamExt};
@@ -161,6 +161,60 @@ pub async fn create_and_start_container(
         .await
         .map_err(|e| e.to_string())?;
     Ok(created.id)
+}
+
+/// Container lifecycle actions the events stream forwards to the frontend;
+/// other event types (image, network, volume, ...) are filtered out engine-side.
+const CONTAINER_EVENT_ACTIONS: &[&str] = &[
+    "start",
+    "stop",
+    "die",
+    "destroy",
+    "create",
+    "rename",
+    "health_status",
+];
+
+/// A container lifecycle event, forwarded to the frontend so the table can
+/// refresh itself instead of waiting for a manual Refresh click.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerEvent {
+    pub action: String,
+    pub container_id: String,
+    pub container_name: Option<String>,
+}
+
+/// Stream container start/stop/die/... events from the Engine's `/events`
+/// endpoint until the caller drops the stream (e.g. aborts the task on
+/// connection switch).
+pub fn stream_container_events(
+    docker: &Docker,
+) -> impl Stream<Item = Result<ContainerEvent, String>> {
+    let mut filters = HashMap::new();
+    filters.insert("type".to_string(), vec!["container".to_string()]);
+    filters.insert(
+        "event".to_string(),
+        CONTAINER_EVENT_ACTIONS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    );
+    let opts = EventsOptionsBuilder::new().filters(&filters).build();
+    docker.events(Some(opts)).map(|item| {
+        item.map_err(|e| e.to_string()).map(|msg| ContainerEvent {
+            action: msg.action.unwrap_or_default(),
+            container_id: msg
+                .actor
+                .as_ref()
+                .and_then(|a| a.id.clone())
+                .unwrap_or_default(),
+            container_name: msg
+                .actor
+                .and_then(|a| a.attributes)
+                .and_then(|attrs| attrs.get("name").cloned()),
+        })
+    })
 }
 
 /// What the frontend renders per image row.

@@ -189,6 +189,58 @@ pub fn stop_log_stream(
     Ok(())
 }
 
+/// Tracks the in-flight container-events task per connection so switching or
+/// disconnecting cancels the previous subscription instead of leaking it.
+#[derive(Default)]
+pub struct EventStreams(Mutex<HashMap<String, JoinHandle<()>>>);
+
+fn cancel_event_stream(streams: &EventStreams, connection_id: &str) {
+    if let Some(handle) = streams.0.lock().unwrap().remove(connection_id) {
+        handle.abort();
+    }
+}
+
+/// Start following container lifecycle events for a connection; events arrive
+/// on the frontend as `container-event:{connectionId}`. Cancels any
+/// subscription already running for this connection first.
+#[tauri::command]
+pub async fn start_event_stream(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EventStreams>,
+    connection_id: String,
+) -> Result<(), String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+
+    cancel_event_stream(&state, &connection_id);
+
+    let event = format!("container-event:{connection_id}");
+    let app_handle = app.clone();
+    let handle = tauri::async_runtime::spawn(async move {
+        let mut stream = docker::stream_container_events(&client);
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(evt) => {
+                    let _ = app_handle.emit(&event, evt);
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    state.0.lock().unwrap().insert(connection_id, handle);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_event_stream(
+    state: tauri::State<'_, EventStreams>,
+    connection_id: String,
+) -> Result<(), String> {
+    cancel_event_stream(&state, &connection_id);
+    Ok(())
+}
+
 /// A running exec session: the engine client (for resize) and the stdin
 /// writer (for keystrokes), plus the output-forwarding task so closing the
 /// terminal tab can cancel it.
@@ -327,6 +379,30 @@ mod tests {
 
         // Second call: entry already gone, must not panic.
         cancel_log_stream(&streams, "c1");
+    }
+
+    /// Same idempotency guarantee as `stop_log_stream`: switching connections
+    /// (or disconnecting) when no event stream was running must not panic.
+    #[test]
+    fn cancel_event_stream_on_unknown_connection_is_a_noop() {
+        let streams = EventStreams::default();
+        cancel_event_stream(&streams, "never-started");
+        cancel_event_stream(&streams, "never-started"); // still a no-op
+    }
+
+    #[tokio::test]
+    async fn cancel_event_stream_is_idempotent_after_a_real_stream() {
+        let streams = EventStreams::default();
+        let handle = tauri::async_runtime::spawn(async {
+            std::future::pending::<()>().await;
+        });
+        streams.0.lock().unwrap().insert("c1".to_string(), handle);
+
+        cancel_event_stream(&streams, "c1");
+        assert!(streams.0.lock().unwrap().get("c1").is_none());
+
+        // Second call: entry already gone, must not panic.
+        cancel_event_stream(&streams, "c1");
     }
 
     fn dummy_exec_session() -> ExecSession {

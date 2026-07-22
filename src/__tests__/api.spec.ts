@@ -16,8 +16,10 @@ import {
   removeImage,
   resizeExec,
   saveConnection,
+  startEventStream,
   startExec,
   startLogStream,
+  stopEventStream,
   stopExec,
   stopLogStream,
   writeExecInput,
@@ -127,6 +129,16 @@ describe("api wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("stop_log_stream", {
       containerId: "abc",
     });
+  });
+
+  it("start_event_stream passes the connection id", async () => {
+    await startEventStream("c1");
+    expect(invoke).toHaveBeenCalledWith("start_event_stream", { connectionId: "c1" });
+  });
+
+  it("stop_event_stream passes the connection id", async () => {
+    await stopEventStream("c1");
+    expect(invoke).toHaveBeenCalledWith("stop_event_stream", { connectionId: "c1" });
   });
 
   it("start_exec passes connection, container and shell", async () => {
