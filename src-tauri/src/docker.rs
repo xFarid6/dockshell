@@ -6,14 +6,16 @@ use std::pin::Pin;
 
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use bollard::models::{ContainerCreateBody, HostConfig, PortBinding as ModelPortBinding};
 use bollard::query_parameters::{
-    CreateImageOptionsBuilder, InspectContainerOptions, ListContainersOptionsBuilder,
-    ListImagesOptionsBuilder, LogsOptionsBuilder, RemoveImageOptionsBuilder,
-    ResizeExecOptionsBuilder, RestartContainerOptions, StartContainerOptions, StopContainerOptions,
+    CreateContainerOptionsBuilder, CreateImageOptionsBuilder, InspectContainerOptions,
+    ListContainersOptionsBuilder, ListImagesOptionsBuilder, LogsOptionsBuilder,
+    RemoveImageOptionsBuilder, ResizeExecOptionsBuilder, RestartContainerOptions,
+    StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
 use futures_util::{Stream, StreamExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 
 use crate::connections::ConnectionInfo;
@@ -98,6 +100,67 @@ pub async fn container_action(docker: &Docker, id: &str, action: &str) -> Result
             .map_err(|e| e.to_string()),
         other => Err(format!("unknown container action: {other}")),
     }
+}
+
+/// A host:container port mapping from the create/run dialog.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortMapping {
+    pub host: String,
+    pub container: String,
+}
+
+/// Create a container from `image` and start it. `ports` maps host ports to
+/// container ports (TCP only in v1); `env` is `KEY=VALUE` pairs. Returns the
+/// new container's ID.
+pub async fn create_and_start_container(
+    docker: &Docker,
+    image: &str,
+    name: Option<&str>,
+    ports: &[PortMapping],
+    env: &[String],
+) -> Result<String, String> {
+    let mut exposed_ports = HashMap::new();
+    let mut port_bindings = HashMap::new();
+    for p in ports {
+        let container_port = format!("{}/tcp", p.container);
+        exposed_ports.insert(container_port.clone(), HashMap::new());
+        port_bindings.insert(
+            container_port,
+            Some(vec![ModelPortBinding {
+                host_ip: None,
+                host_port: Some(p.host.clone()),
+            }]),
+        );
+    }
+
+    let body = ContainerCreateBody {
+        image: Some(image.to_string()),
+        env: Some(env.to_vec()),
+        exposed_ports: Some(exposed_ports),
+        host_config: Some(HostConfig {
+            port_bindings: Some(port_bindings),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let opts = CreateContainerOptionsBuilder::new();
+    let opts = match name {
+        Some(n) => opts.name(n),
+        None => opts,
+    }
+    .build();
+
+    let created = docker
+        .create_container(Some(opts), body)
+        .await
+        .map_err(|e| e.to_string())?;
+    docker
+        .start_container(&created.id, None::<StartContainerOptions>)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(created.id)
 }
 
 /// What the frontend renders per image row.

@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 import ConnectionList from "../components/ConnectionList.vue";
 import ContainerDetail from "../components/ContainerDetail.vue";
 import ContainerTable from "../components/ContainerTable.vue";
+import CreateContainerDialog from "../components/CreateContainerDialog.vue";
 import ImageTable from "../components/ImageTable.vue";
 import TaskLogPanel from "../components/TaskLogPanel.vue";
 import type {
@@ -161,8 +162,53 @@ describe("ImageTable", () => {
 
   it("emits remove with the image's first tag", async () => {
     const w = mount(ImageTable, { props: { images, busy: false } });
-    await w.find("td.actions button").trigger("click");
+    await w.findAll("td.actions button")[1].trigger("click");
     expect(w.emitted("remove")).toEqual([["alpine:latest"]]);
+  });
+
+  it("emits run with the image's first tag", async () => {
+    const w = mount(ImageTable, { props: { images, busy: false } });
+    await w.findAll("td.actions button")[0].trigger("click");
+    expect(w.emitted("run")).toEqual([["alpine:latest"]]);
+  });
+});
+
+describe("CreateContainerDialog", () => {
+  it("emits create with trimmed name and filtered ports/env", async () => {
+    const w = mount(CreateContainerDialog, {
+      props: { image: "nginx:latest", busy: false },
+    });
+
+    await w.find("input[placeholder='my-container']").setValue("  web  ");
+    const portInputs = w.findAll(".field-group")[0].findAll("input");
+    await portInputs[0].setValue("8080");
+    await portInputs[1].setValue("80");
+    const envInput = w.findAll(".field-group")[1].find("input");
+    await envInput.setValue("FOO=bar");
+
+    await w.find(".actions button").trigger("click");
+
+    expect(w.emitted("create")).toEqual([
+      ["web", [{ host: "8080", container: "80" }], ["FOO=bar"]],
+    ]);
+  });
+
+  it("drops blank port rows and blank env entries", async () => {
+    const w = mount(CreateContainerDialog, {
+      props: { image: "nginx:latest", busy: false },
+    });
+
+    await w.find(".actions button").trigger("click");
+
+    expect(w.emitted("create")).toEqual([[undefined, [], []]]);
+  });
+
+  it("emits close on cancel", async () => {
+    const w = mount(CreateContainerDialog, {
+      props: { image: "nginx:latest", busy: false },
+    });
+    await w.findAll(".actions button")[1].trigger("click");
+    expect(w.emitted("close")).toHaveLength(1);
   });
 });
 
