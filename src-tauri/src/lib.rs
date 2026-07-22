@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod connections;
 pub mod docker;
+pub mod settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -29,6 +30,8 @@ pub fn run() {
             commands::write_exec_input,
             commands::resize_exec,
             commands::stop_exec,
+            commands::get_settings,
+            commands::save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,12 +5,14 @@ import {
   containerAction,
   createContainer,
   deleteConnection,
+  getSettings,
   listConnections,
   listContainers,
   listImages,
   pullImage,
   removeImage,
   saveConnection,
+  saveSettings,
   testConnection,
   type ConnectionInfo,
   type ContainerAction,
@@ -18,6 +20,7 @@ import {
   type ImageInfo,
   type PortMapping,
   type PullProgress,
+  type Settings,
 } from "./api";
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
@@ -26,7 +29,42 @@ import ContainerTable from "./components/ContainerTable.vue";
 import CreateContainerDialog from "./components/CreateContainerDialog.vue";
 import ExecTerminal from "./components/ExecTerminal.vue";
 import ImageTable from "./components/ImageTable.vue";
+import SettingsDialog from "./components/SettingsDialog.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
+
+function applyTheme(theme: Settings["theme"]) {
+  const effective =
+    theme === "system"
+      ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+      : theme;
+  document.documentElement.setAttribute("data-theme", effective);
+}
+
+const settings = ref<Settings>({ theme: "system", refreshIntervalSecs: 10 });
+const settingsOpen = ref(false);
+let systemThemeQuery: MediaQueryList | null = null;
+
+async function refreshSettings() {
+  settings.value = await getSettings();
+  applyTheme(settings.value.theme);
+  systemThemeQuery?.removeEventListener("change", onSystemThemeChange);
+  systemThemeQuery = null;
+  if (settings.value.theme === "system") {
+    systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    systemThemeQuery.addEventListener("change", onSystemThemeChange);
+  }
+}
+
+function onSystemThemeChange() {
+  applyTheme(settings.value.theme);
+}
+
+async function onSaveSettings(next: Settings) {
+  await saveSettings(next);
+  await refreshSettings();
+  settingsOpen.value = false;
+  logTask("settings saved");
+}
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
@@ -194,7 +232,10 @@ async function onRemoveImage(image: string) {
   await refreshImages();
 }
 
-onMounted(refreshConnections);
+onMounted(() => {
+  refreshConnections();
+  refreshSettings();
+});
 </script>
 
 <template>
@@ -249,6 +290,12 @@ onMounted(refreshConnections);
           v-if="error"
           class="error"
         >{{ error }}</span>
+        <button
+          class="settings-button"
+          @click="settingsOpen = true"
+        >
+          Settings
+        </button>
       </div>
       <ContainerTable
         v-if="activeId && view === 'containers'"
@@ -301,15 +348,44 @@ onMounted(refreshConnections);
         :container-id="logsContainerId"
       />
     </main>
+    <SettingsDialog
+      v-if="settingsOpen"
+      :settings="settings"
+      @save="onSaveSettings"
+      @close="settingsOpen = false"
+    />
   </div>
 </template>
 
 <style>
+:root,
+:root[data-theme="dark"] {
+  --color-bg: #1d2126;
+  --color-fg: #e8e8e8;
+  --color-surface: #2c323a;
+  --color-input-bg: #262b32;
+  --color-input-border: #3a414b;
+  --color-border: rgba(128, 128, 128, 0.25);
+  --color-hover: rgba(128, 128, 128, 0.1);
+  --color-accent: #3f8cff;
+  --color-error: #ff6b6b;
+}
+:root[data-theme="light"] {
+  --color-bg: #f5f6f8;
+  --color-fg: #1c1f24;
+  --color-surface: #e5e7eb;
+  --color-input-bg: #ffffff;
+  --color-input-border: #c7cdd6;
+  --color-border: rgba(0, 0, 0, 0.12);
+  --color-hover: rgba(0, 0, 0, 0.06);
+  --color-accent: #2f6fe0;
+  --color-error: #c53030;
+}
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 15px;
-  color: #e8e8e8;
-  background-color: #1d2126;
+  color: var(--color-fg);
+  background-color: var(--color-bg);
 }
 body {
   margin: 0;
@@ -320,11 +396,11 @@ button {
   padding: 0.4em 0.9em;
   font-family: inherit;
   color: inherit;
-  background-color: #2c323a;
+  background-color: var(--color-surface);
   cursor: pointer;
 }
 button:hover:not(:disabled) {
-  border-color: #3f8cff;
+  border-color: var(--color-accent);
 }
 button:disabled {
   opacity: 0.45;
@@ -332,11 +408,11 @@ button:disabled {
 }
 input {
   border-radius: 6px;
-  border: 1px solid #3a414b;
+  border: 1px solid var(--color-input-border);
   padding: 0.4em 0.6em;
   font-family: inherit;
   color: inherit;
-  background-color: #262b32;
+  background-color: var(--color-input-bg);
 }
 </style>
 
@@ -347,7 +423,7 @@ input {
 }
 .sidebar {
   width: 260px;
-  border-right: 1px solid rgba(128, 128, 128, 0.25);
+  border-right: 1px solid var(--color-border);
   overflow-y: auto;
   padding: 0.5rem;
 }
@@ -373,11 +449,14 @@ input {
   margin-right: 0.5rem;
 }
 .view-nav button.active {
-  border-color: #3f8cff;
+  border-color: var(--color-accent);
 }
 .error {
-  color: #ff6b6b;
+  color: var(--color-error);
   font-size: 0.85rem;
+}
+.settings-button {
+  margin-left: auto;
 }
 .hint {
   padding: 1rem;
@@ -390,7 +469,7 @@ input {
 .exec-panel {
   flex: 1;
   min-height: 280px;
-  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  border-top: 1px solid var(--color-border);
 }
 .detail-panel {
   max-height: 40vh;
