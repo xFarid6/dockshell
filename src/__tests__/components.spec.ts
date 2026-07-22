@@ -15,8 +15,14 @@ vi.mock("@tauri-apps/api/event", () => ({
 import ConnectionList from "../components/ConnectionList.vue";
 import ContainerDetail from "../components/ContainerDetail.vue";
 import ContainerTable from "../components/ContainerTable.vue";
+import ImageTable from "../components/ImageTable.vue";
 import TaskLogPanel from "../components/TaskLogPanel.vue";
-import type { ConnectionInfo, ContainerDetail as ContainerDetailInfo, ContainerInfo } from "../api";
+import type {
+  ConnectionInfo,
+  ContainerDetail as ContainerDetailInfo,
+  ContainerInfo,
+  ImageInfo,
+} from "../api";
 
 const conns: ConnectionInfo[] = [
   { id: "1", name: "wyse-server", endpoint: "tcp://192.168.1.105:2375", useTls: false },
@@ -119,6 +125,44 @@ describe("ContainerTable", () => {
 
     await w.find("tr[data-state]").trigger("click");
     expect(w.emitted("detail")).toEqual([["abc123def456"]]);
+  });
+});
+
+describe("ImageTable", () => {
+  const images: ImageInfo[] = [
+    { id: "sha256:abc123def456", tags: ["alpine:latest"], size: 7500000, created: 1751328000 },
+  ];
+
+  it("renders image rows", () => {
+    const w = mount(ImageTable, { props: { images, busy: false } });
+    expect(w.text()).toContain("alpine:latest");
+    expect(w.text()).toContain("7.2 MB");
+  });
+
+  it("shows an empty state", () => {
+    const w = mount(ImageTable, { props: { images: [], busy: false } });
+    expect(w.text()).toContain("No images.");
+  });
+
+  it("emits pull with the trimmed input and clears it", async () => {
+    const w = mount(ImageTable, { props: { images: [], busy: false } });
+    const input = w.find("input");
+    await input.setValue("  nginx:latest  ");
+    await w.find(".pull-form button").trigger("click");
+    expect(w.emitted("pull")).toEqual([["nginx:latest"]]);
+    expect((input.element as HTMLInputElement).value).toBe("");
+  });
+
+  it("does not emit pull for a blank input", async () => {
+    const w = mount(ImageTable, { props: { images: [], busy: false } });
+    await w.find(".pull-form button").trigger("click");
+    expect(w.emitted("pull")).toBeUndefined();
+  });
+
+  it("emits remove with the image's first tag", async () => {
+    const w = mount(ImageTable, { props: { images, busy: false } });
+    await w.find("td.actions button").trigger("click");
+    expect(w.emitted("remove")).toEqual([["alpine:latest"]]);
   });
 });
 

@@ -226,6 +226,88 @@ async fn inspects_container_from_engine_api() {
 }
 
 #[tokio::test]
+async fn lists_images_from_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/images/json$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "Id": "sha256:abc123",
+                "ParentId": "",
+                "RepoTags": ["alpine:latest"],
+                "RepoDigests": [],
+                "Created": 1751328000i64,
+                "Size": 7500000i64,
+                "SharedSize": 0,
+                "Labels": {},
+                "Containers": -1
+            }
+        ])))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let images = docker::list_images(&client).await.unwrap();
+
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].id, "sha256:abc123");
+    assert_eq!(images[0].tags, vec!["alpine:latest".to_string()]);
+    assert_eq!(images[0].size, 7500000);
+    assert_eq!(images[0].created, 1751328000);
+}
+
+#[tokio::test]
+async fn removes_an_image_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path_regex(r"^(/v[0-9.]+)?/images/alpine:latest$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "Deleted": "sha256:abc123" }
+        ])))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    docker::remove_image(&client, "alpine:latest", false)
+        .await
+        .unwrap();
+}
+
+/// The Engine API streams `/images/create` as newline-delimited JSON objects
+/// (bollard decodes with `JsonLineDecoder`), one per progress update.
+#[tokio::test]
+async fn streams_pull_progress_from_engine_api() {
+    let server = MockServer::start().await;
+    let body = concat!(
+        r#"{"status":"Pulling from library/alpine","id":"latest"}"#,
+        "\n",
+        r#"{"status":"Downloading","progress":"[====>   ] 1MB/2MB","id":"a1b2c3"}"#,
+        "\n",
+    );
+
+    Mock::given(method("POST"))
+        .and(path_regex(r"^(/v[0-9.]+)?/images/create$"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let updates: Vec<_> = docker::pull_image(&client, "alpine:latest")
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|u| u.unwrap())
+        .collect();
+
+    assert_eq!(updates.len(), 2);
+    assert_eq!(updates[0].status, "Pulling from library/alpine");
+    assert_eq!(updates[0].id.as_deref(), Some("latest"));
+    assert_eq!(updates[1].status, "Downloading");
+    assert_eq!(updates[1].progress.as_deref(), Some("[====>   ] 1MB/2MB"));
+    assert_eq!(updates[1].id.as_deref(), Some("a1b2c3"));
+}
+
+#[tokio::test]
 async fn resizes_exec_tty_via_engine_api() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

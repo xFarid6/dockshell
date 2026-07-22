@@ -10,6 +10,9 @@ import {
   inspectContainer,
   listConnections,
   listContainers,
+  listImages,
+  pullImage,
+  removeImage,
   resizeExec,
   saveConnection,
   startExec,
@@ -59,6 +62,29 @@ describe("api wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("inspect_container", {
       connectionId: "c1",
       containerId: "abc",
+    });
+  });
+
+  it("list_images passes the connection id", async () => {
+    invoke.mockResolvedValue([]);
+    await listImages("c1");
+    expect(invoke).toHaveBeenCalledWith("list_images", { connectionId: "c1" });
+  });
+
+  it("remove_image passes connection id, image ref and force flag", async () => {
+    await removeImage("c1", "alpine:latest", false);
+    expect(invoke).toHaveBeenCalledWith("remove_image", {
+      connectionId: "c1",
+      image: "alpine:latest",
+      force: false,
+    });
+  });
+
+  it("pull_image passes the connection id and image ref", async () => {
+    await pullImage("c1", "alpine:latest");
+    expect(invoke).toHaveBeenCalledWith("pull_image", {
+      connectionId: "c1",
+      image: "alpine:latest",
     });
   });
 

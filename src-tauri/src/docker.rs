@@ -7,7 +7,8 @@ use std::pin::Pin;
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::query_parameters::{
-    InspectContainerOptions, ListContainersOptionsBuilder, LogsOptionsBuilder,
+    CreateImageOptionsBuilder, InspectContainerOptions, ListContainersOptionsBuilder,
+    ListImagesOptionsBuilder, LogsOptionsBuilder, RemoveImageOptionsBuilder,
     ResizeExecOptionsBuilder, RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
@@ -97,6 +98,69 @@ pub async fn container_action(docker: &Docker, id: &str, action: &str) -> Result
             .map_err(|e| e.to_string()),
         other => Err(format!("unknown container action: {other}")),
     }
+}
+
+/// What the frontend renders per image row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInfo {
+    pub id: String,
+    pub tags: Vec<String>,
+    pub size: i64,
+    pub created: i64,
+}
+
+pub async fn list_images(docker: &Docker) -> Result<Vec<ImageInfo>, String> {
+    let opts = ListImagesOptionsBuilder::new().build();
+    let summaries = docker
+        .list_images(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(summaries
+        .into_iter()
+        .map(|i| ImageInfo {
+            id: i.id,
+            tags: i.repo_tags,
+            size: i.size,
+            created: i.created,
+        })
+        .collect())
+}
+
+/// Remove an image by ID or `repo:tag`. `force` matches `docker rmi -f`.
+pub async fn remove_image(docker: &Docker, image: &str, force: bool) -> Result<(), String> {
+    let opts = RemoveImageOptionsBuilder::new().force(force).build();
+    docker
+        .remove_image(image, Some(opts), None)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// One line of `docker pull` progress — layer id plus a human-readable status.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullProgress {
+    pub id: Option<String>,
+    pub status: String,
+    pub progress: Option<String>,
+}
+
+/// Pull an image (`repo:tag` or `repo@digest`), streaming layer-by-layer
+/// progress. Registry auth is out of scope for now — public images only.
+pub fn pull_image(
+    docker: &Docker,
+    image: &str,
+) -> impl Stream<Item = Result<PullProgress, String>> {
+    let opts = CreateImageOptionsBuilder::new().from_image(image).build();
+    docker.create_image(Some(opts), None, None).map(|item| {
+        item.map(|info| PullProgress {
+            id: info.id,
+            status: info.status.unwrap_or_default(),
+            progress: info.progress,
+        })
+        .map_err(|e| e.to_string())
+    })
 }
 
 /// A bind/volume mount attached to a container.

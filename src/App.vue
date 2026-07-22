@@ -1,27 +1,37 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { listen } from "@tauri-apps/api/event";
 import {
   containerAction,
   deleteConnection,
   listConnections,
   listContainers,
+  listImages,
+  pullImage,
+  removeImage,
   saveConnection,
   testConnection,
   type ConnectionInfo,
   type ContainerAction,
   type ContainerInfo,
+  type ImageInfo,
+  type PullProgress,
 } from "./api";
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
 import ContainerDetail from "./components/ContainerDetail.vue";
 import ContainerTable from "./components/ContainerTable.vue";
 import ExecTerminal from "./components/ExecTerminal.vue";
+import ImageTable from "./components/ImageTable.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
+const view = ref<"containers" | "images">("containers");
 const containers = ref<ContainerInfo[]>([]);
+const images = ref<ImageInfo[]>([]);
 const busy = ref(false);
+const imagesBusy = ref(false);
 const error = ref("");
 const taskLog = ref<string[]>([]);
 const logsContainerId = ref<string | null>(null);
@@ -50,12 +60,32 @@ async function refreshContainers() {
   }
 }
 
+async function refreshImages() {
+  if (!activeId.value) return;
+  imagesBusy.value = true;
+  error.value = "";
+  try {
+    images.value = await listImages(activeId.value);
+  } catch (e) {
+    error.value = String(e);
+    images.value = [];
+  } finally {
+    imagesBusy.value = false;
+  }
+}
+
 async function onSelect(id: string) {
   activeId.value = id;
   logsContainerId.value = null;
   execContainerId.value = null;
   detailContainerId.value = null;
   await refreshContainers();
+  if (view.value === "images") await refreshImages();
+}
+
+async function onSwitchView(next: "containers" | "images") {
+  view.value = next;
+  if (next === "images") await refreshImages();
 }
 
 function onLogs(containerId: string) {
@@ -110,6 +140,41 @@ async function onAction(containerId: string, action: ContainerAction) {
   await refreshContainers();
 }
 
+async function onPull(image: string) {
+  if (!activeId.value) return;
+  const connectionId = activeId.value;
+  imagesBusy.value = true;
+  logTask(`pull ${image} — starting`);
+  const unlisten = await listen<PullProgress>(`pull-progress:${image}`, (event) => {
+    const p = event.payload;
+    logTask(`pull ${image} — ${p.status}${p.progress ? " " + p.progress : ""}`);
+  });
+  try {
+    await pullImage(connectionId, image);
+    logTask(`pull ${image} — done`);
+  } catch (e) {
+    logTask(`pull ${image} — failed: ${e}`);
+  } finally {
+    unlisten();
+    imagesBusy.value = false;
+    await refreshImages();
+  }
+}
+
+async function onRemoveImage(image: string) {
+  if (!activeId.value) return;
+  imagesBusy.value = true;
+  try {
+    await removeImage(activeId.value, image, false);
+    logTask(`remove image ${image} — ok`);
+  } catch (e) {
+    logTask(`remove image ${image} — failed: ${e}`);
+  } finally {
+    imagesBusy.value = false;
+  }
+  await refreshImages();
+}
+
 onMounted(refreshConnections);
 </script>
 
@@ -127,9 +192,31 @@ onMounted(refreshConnections);
     </aside>
     <main class="main">
       <div class="toolbar">
+        <nav class="view-nav">
+          <button
+            :class="{ active: view === 'containers' }"
+            @click="onSwitchView('containers')"
+          >
+            Containers
+          </button>
+          <button
+            :class="{ active: view === 'images' }"
+            @click="onSwitchView('images')"
+          >
+            Images
+          </button>
+        </nav>
         <button
+          v-if="view === 'containers'"
           :disabled="!activeId || busy"
           @click="refreshContainers"
+        >
+          Refresh
+        </button>
+        <button
+          v-else
+          :disabled="!activeId || imagesBusy"
+          @click="refreshImages"
         >
           Refresh
         </button>
@@ -145,13 +232,20 @@ onMounted(refreshConnections);
         >{{ error }}</span>
       </div>
       <ContainerTable
-        v-if="activeId"
+        v-if="activeId && view === 'containers'"
         :containers="containers"
         :busy="busy"
         @action="onAction"
         @logs="onLogs"
         @exec="onExec"
         @detail="onDetail"
+      />
+      <ImageTable
+        v-else-if="activeId && view === 'images'"
+        :images="images"
+        :busy="imagesBusy"
+        @pull="onPull"
+        @remove="onRemoveImage"
       />
       <p
         v-else
@@ -160,14 +254,14 @@ onMounted(refreshConnections);
         Select or add a Docker host to get started.
       </p>
       <ContainerDetail
-        v-if="activeId && detailContainerId"
+        v-if="activeId && view === 'containers' && detailContainerId"
         :connection-id="activeId"
         :container-id="detailContainerId"
         class="detail-panel"
         @close="detailContainerId = null"
       />
       <ExecTerminal
-        v-if="activeId && execContainerId"
+        v-if="activeId && view === 'containers' && execContainerId"
         :connection-id="activeId"
         :container-id="execContainerId"
         class="exec-panel"
@@ -243,6 +337,14 @@ input {
   gap: 0.5rem;
   align-items: center;
   padding: 0.5rem;
+}
+.view-nav {
+  display: flex;
+  gap: 0.3rem;
+  margin-right: 0.5rem;
+}
+.view-nav button.active {
+  border-color: #3f8cff;
 }
 .error {
   color: #ff6b6b;
