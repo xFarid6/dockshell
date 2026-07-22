@@ -52,6 +52,19 @@ export interface LogLine {
   message: string;
 }
 
+export interface ImageInfo {
+  id: string;
+  tags: string[];
+  size: number;
+  created: number;
+}
+
+export interface PullProgress {
+  id: string | null;
+  status: string;
+  progress: string | null;
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -75,6 +88,16 @@ export const containerAction = (
 
 export const inspectContainer = (connectionId: string, containerId: string) =>
   invoke<ContainerDetail>("inspect_container", { connectionId, containerId });
+
+export const listImages = (connectionId: string) =>
+  invoke<ImageInfo[]>("list_images", { connectionId });
+
+export const removeImage = (connectionId: string, image: string, force: boolean) =>
+  invoke<void>("remove_image", { connectionId, image, force });
+
+/** Resolves once the pull completes; progress arrives as `pull-progress:{image}` events. */
+export const pullImage = (connectionId: string, image: string) =>
+  invoke<void>("pull_image", { connectionId, image });
 
 export const startLogStream = (connectionId: string, containerId: string) =>
   invoke<void>("start_log_stream", { connectionId, containerId });

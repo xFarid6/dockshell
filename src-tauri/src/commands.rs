@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::connections::{self, ConnectionInfo};
-use crate::docker::{self, ContainerDetail, ContainerInfo, ExecInput};
+use crate::docker::{self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo};
 
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -75,6 +75,48 @@ pub async fn inspect_container(
     let info = connections::get(&store_dir(&app)?, &connection_id)?;
     let client = docker::client_for(&info)?;
     docker::inspect_container(&client, &container_id).await
+}
+
+#[tauri::command]
+pub async fn list_images(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<ImageInfo>, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::list_images(&client).await
+}
+
+#[tauri::command]
+pub async fn remove_image(
+    app: tauri::AppHandle,
+    connection_id: String,
+    image: String,
+    force: bool,
+) -> Result<(), String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::remove_image(&client, &image, force).await
+}
+
+/// Pull an image, forwarding layer-by-layer progress as `pull-progress:{image}`
+/// events while the command is in flight; resolves once the pull completes.
+#[tauri::command]
+pub async fn pull_image(
+    app: tauri::AppHandle,
+    connection_id: String,
+    image: String,
+) -> Result<(), String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+
+    let event = format!("pull-progress:{image}");
+    let mut stream = docker::pull_image(&client, &image);
+    while let Some(item) = stream.next().await {
+        let progress = item?;
+        let _ = app.emit(&event, progress);
+    }
+    Ok(())
 }
 
 /// Tracks the in-flight log-follow task per container so a new "Logs" click
