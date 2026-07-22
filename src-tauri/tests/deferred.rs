@@ -12,7 +12,3 @@ fn lists_and_inspects_networks() {}
 #[test]
 #[ignore = "not implemented — compose file support, see dockshell issue #6"]
 fn compose_up_from_file() {}
-
-#[test]
-#[ignore = "not implemented — TLS client-cert auth for remote engines, see dockshell issue #7"]
-fn connects_with_tls_client_cert() {}

@@ -15,6 +15,8 @@ fn conn_for(server: &MockServer) -> ConnectionInfo {
         name: "mock engine".into(),
         endpoint: server.uri(),
         use_tls: false,
+        client_cert_path: None,
+        ca_cert_path: None,
     }
 }
 
@@ -469,6 +471,8 @@ async fn streams_tty_exec_output_over_the_upgraded_connection() {
         name: "fake exec daemon".into(),
         endpoint,
         use_tls: false,
+        client_cert_path: None,
+        ca_cert_path: None,
     };
     let client = docker::client_for(&conn).unwrap();
 
