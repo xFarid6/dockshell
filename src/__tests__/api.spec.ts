@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   containerAction,
+  inspectContainer,
   listConnections,
   listContainers,
   resizeExec,
@@ -50,6 +51,14 @@ describe("api wrappers", () => {
       connectionId: "c1",
       containerId: "abc",
       action: "restart",
+    });
+  });
+
+  it("inspect_container passes the connection and container ids", async () => {
+    await inspectContainer("c1", "abc");
+    expect(invoke).toHaveBeenCalledWith("inspect_container", {
+      connectionId: "c1",
+      containerId: "abc",
     });
   });
 

@@ -13,9 +13,10 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import ConnectionList from "../components/ConnectionList.vue";
+import ContainerDetail from "../components/ContainerDetail.vue";
 import ContainerTable from "../components/ContainerTable.vue";
 import TaskLogPanel from "../components/TaskLogPanel.vue";
-import type { ConnectionInfo, ContainerInfo } from "../api";
+import type { ConnectionInfo, ContainerDetail as ContainerDetailInfo, ContainerInfo } from "../api";
 
 const conns: ConnectionInfo[] = [
   { id: "1", name: "wyse-server", endpoint: "tcp://192.168.1.105:2375", useTls: false },
@@ -107,6 +108,95 @@ describe("ContainerTable", () => {
     });
     const buttons = w.findAll("td.actions button");
     expect(buttons[4].attributes("disabled")).toBeDefined();
+  });
+
+  it("emits detail on row click but not on action-cell clicks", async () => {
+    const w = mount(ContainerTable, {
+      props: { containers, busy: false },
+    });
+    await w.find("td.actions button").trigger("click"); // start (disabled, but click still bubbles from td)
+    expect(w.emitted("detail")).toBeUndefined();
+
+    await w.find("tr[data-state]").trigger("click");
+    expect(w.emitted("detail")).toEqual([["abc123def456"]]);
+  });
+});
+
+describe("ContainerDetail", () => {
+  const detail: ContainerDetailInfo = {
+    id: "abc123def456",
+    name: "portainer",
+    image: "portainer/portainer-ce:latest",
+    state: "running",
+    health: "healthy",
+    created: "2026-07-01T00:00:00Z",
+    restartPolicy: "unless-stopped",
+    env: ["FOO=bar"],
+    labels: { "com.example": "1" },
+    mounts: [{ source: "/data", destination: "/var/lib/portainer", mode: "rw" }],
+    ports: [{ containerPort: "9000/tcp", hostIp: "0.0.0.0", hostPort: "9000" }],
+  };
+
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("loads and renders inspect data", async () => {
+    invoke.mockResolvedValue(detail);
+    const w = mount(ContainerDetail, {
+      props: { connectionId: "c1", containerId: "abc123def456" },
+    });
+    await flushPromises();
+
+    expect(invoke).toHaveBeenCalledWith("inspect_container", {
+      connectionId: "c1",
+      containerId: "abc123def456",
+    });
+    expect(w.text()).toContain("portainer/portainer-ce:latest");
+    expect(w.text()).toContain("running");
+    expect(w.text()).toContain("healthy");
+    expect(w.text()).toContain("unless-stopped");
+    expect(w.text()).toContain("0.0.0.0:9000 → 9000/tcp");
+    expect(w.text()).toContain("/data → /var/lib/portainer");
+    expect(w.text()).toContain("FOO=bar");
+    expect(w.text()).toContain("com.example=1");
+  });
+
+  it("shows the invoke error instead of the panel on failure", async () => {
+    invoke.mockRejectedValue(new Error("no such container"));
+    const w = mount(ContainerDetail, {
+      props: { connectionId: "c1", containerId: "gone" },
+    });
+    await flushPromises();
+
+    expect(w.text()).toContain("no such container");
+  });
+
+  it("re-fetches when the container id changes", async () => {
+    invoke.mockResolvedValue(detail);
+    const w = mount(ContainerDetail, {
+      props: { connectionId: "c1", containerId: "abc123def456" },
+    });
+    await flushPromises();
+
+    await w.setProps({ containerId: "other" });
+    await flushPromises();
+
+    expect(invoke).toHaveBeenCalledWith("inspect_container", {
+      connectionId: "c1",
+      containerId: "other",
+    });
+  });
+
+  it("emits close", async () => {
+    invoke.mockResolvedValue(detail);
+    const w = mount(ContainerDetail, {
+      props: { connectionId: "c1", containerId: "abc123def456" },
+    });
+    await flushPromises();
+
+    await w.find("button.close").trigger("click");
+    expect(w.emitted("close")).toHaveLength(1);
   });
 });
 

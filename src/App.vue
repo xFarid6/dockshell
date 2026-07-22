@@ -13,6 +13,7 @@ import {
 } from "./api";
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
+import ContainerDetail from "./components/ContainerDetail.vue";
 import ContainerTable from "./components/ContainerTable.vue";
 import ExecTerminal from "./components/ExecTerminal.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
@@ -25,6 +26,7 @@ const error = ref("");
 const taskLog = ref<string[]>([]);
 const logsContainerId = ref<string | null>(null);
 const execContainerId = ref<string | null>(null);
+const detailContainerId = ref<string | null>(null);
 
 function logTask(msg: string) {
   taskLog.value.unshift(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -52,6 +54,7 @@ async function onSelect(id: string) {
   activeId.value = id;
   logsContainerId.value = null;
   execContainerId.value = null;
+  detailContainerId.value = null;
   await refreshContainers();
 }
 
@@ -61,6 +64,10 @@ function onLogs(containerId: string) {
 
 function onExec(containerId: string) {
   execContainerId.value = execContainerId.value === containerId ? null : containerId;
+}
+
+function onDetail(containerId: string) {
+  detailContainerId.value = detailContainerId.value === containerId ? null : containerId;
 }
 
 async function onSave(info: ConnectionInfo, secret: string | undefined) {
@@ -144,6 +151,7 @@ onMounted(refreshConnections);
         @action="onAction"
         @logs="onLogs"
         @exec="onExec"
+        @detail="onDetail"
       />
       <p
         v-else
@@ -151,6 +159,13 @@ onMounted(refreshConnections);
       >
         Select or add a Docker host to get started.
       </p>
+      <ContainerDetail
+        v-if="activeId && detailContainerId"
+        :connection-id="activeId"
+        :container-id="detailContainerId"
+        class="detail-panel"
+        @close="detailContainerId = null"
+      />
       <ExecTerminal
         v-if="activeId && execContainerId"
         :connection-id="activeId"
@@ -245,6 +260,9 @@ input {
   flex: 1;
   min-height: 280px;
   border-top: 1px solid rgba(128, 128, 128, 0.25);
+}
+.detail-panel {
+  max-height: 40vh;
 }
 .task-log-panel {
   margin-top: auto;

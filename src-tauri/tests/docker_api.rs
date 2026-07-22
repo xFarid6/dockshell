@@ -170,6 +170,62 @@ async fn handles_invalid_utf8_in_log_message() {
 }
 
 #[tokio::test]
+async fn inspects_container_from_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/containers/abc123/json$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": "abc123",
+            "Created": "2026-07-01T12:00:00Z",
+            "Name": "/portainer",
+            "Image": "sha256:deadbeef",
+            "State": {
+                "Status": "running",
+                "Health": { "Status": "healthy" }
+            },
+            "HostConfig": {
+                "RestartPolicy": { "Name": "unless-stopped" }
+            },
+            "Mounts": [
+                { "Source": "/data", "Destination": "/var/lib/portainer", "Mode": "rw" }
+            ],
+            "Config": {
+                "Image": "portainer/portainer-ce:latest",
+                "Env": ["FOO=bar"],
+                "Labels": { "com.example": "1" }
+            },
+            "NetworkSettings": {
+                "Ports": {
+                    "9000/tcp": [{ "HostIp": "0.0.0.0", "HostPort": "9000" }]
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let detail = docker::inspect_container(&client, "abc123").await.unwrap();
+
+    assert_eq!(detail.id, "abc123");
+    assert_eq!(detail.name, "portainer"); // leading slash stripped
+    assert_eq!(detail.image, "portainer/portainer-ce:latest");
+    assert_eq!(detail.state, "running");
+    assert_eq!(detail.health.as_deref(), Some("healthy"));
+    assert_eq!(detail.restart_policy, "unless-stopped");
+    assert_eq!(detail.env, vec!["FOO=bar".to_string()]);
+    assert_eq!(detail.labels.get("com.example"), Some(&"1".to_string()));
+    assert_eq!(detail.mounts.len(), 1);
+    assert_eq!(detail.mounts[0].source, "/data");
+    assert_eq!(detail.mounts[0].destination, "/var/lib/portainer");
+    assert_eq!(detail.mounts[0].mode, "rw");
+    assert_eq!(detail.ports.len(), 1);
+    assert_eq!(detail.ports[0].container_port, "9000/tcp");
+    assert_eq!(detail.ports[0].host_ip, "0.0.0.0");
+    assert_eq!(detail.ports[0].host_port, "9000");
+    assert!(detail.created.starts_with("2026-07-01"));
+}
+
+#[tokio::test]
 async fn resizes_exec_tty_via_engine_api() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
