@@ -70,6 +70,12 @@ export interface PortMapping {
   container: string;
 }
 
+export interface ContainerEvent {
+  action: string;
+  containerId: string;
+  containerName: string | null;
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -125,6 +131,13 @@ export const startLogStream = (connectionId: string, containerId: string) =>
 
 export const stopLogStream = (containerId: string) =>
   invoke<void>("stop_log_stream", { containerId });
+
+/** Follows container lifecycle events; they arrive as `container-event:{connectionId}`. */
+export const startEventStream = (connectionId: string) =>
+  invoke<void>("start_event_stream", { connectionId });
+
+export const stopEventStream = (connectionId: string) =>
+  invoke<void>("stop_event_stream", { connectionId });
 
 export type ExecShell = "/bin/sh" | "/bin/bash";
 

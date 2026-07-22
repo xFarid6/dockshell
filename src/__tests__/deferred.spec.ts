@@ -7,5 +7,4 @@ describe("deferred features", () => {
   test.todo("network management view (issue #5)");
   test.todo("compose file up/down (issue #6)");
   test.todo("TLS client-cert fields on the connection form (issue #7)");
-  test.todo("live container state via Docker events (issue #10)");
 });

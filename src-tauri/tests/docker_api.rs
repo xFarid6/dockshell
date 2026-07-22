@@ -360,6 +360,46 @@ async fn streams_pull_progress_from_engine_api() {
 }
 
 #[tokio::test]
+async fn streams_container_events_from_engine_api() {
+    let server = MockServer::start().await;
+    let body = concat!(
+        r#"{"Type":"container","Action":"start","Actor":{"ID":"abc123","Attributes":{"name":"web"}},"time":1}"#,
+        "\n",
+        r#"{"Type":"container","Action":"die","Actor":{"ID":"def456","Attributes":{"name":"db"}},"time":2}"#,
+        "\n",
+    );
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/events$"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let events: Vec<_> = docker::stream_container_events(&client)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|e| e.unwrap())
+        .collect();
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].action, "start");
+    assert_eq!(events[0].container_id, "abc123");
+    assert_eq!(events[0].container_name.as_deref(), Some("web"));
+    assert_eq!(events[1].action, "die");
+    assert_eq!(events[1].container_id, "def456");
+
+    let requests = server.received_requests().await.unwrap();
+    let events_req = requests
+        .iter()
+        .find(|r| r.url.path().ends_with("/events"))
+        .expect("events request recorded");
+    let query = events_req.url.query().unwrap_or_default();
+    assert!(query.contains("filters="));
+}
+
+#[tokio::test]
 async fn resizes_exec_tty_via_engine_api() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

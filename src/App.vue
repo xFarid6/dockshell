@@ -254,10 +254,12 @@ onMounted(refreshConnections);
         v-if="activeId && view === 'containers'"
         :containers="containers"
         :busy="busy"
+        :connection-id="activeId"
         @action="onAction"
         @logs="onLogs"
         @exec="onExec"
         @detail="onDetail"
+        @refresh="refreshContainers"
       />
       <ImageTable
         v-else-if="activeId && view === 'images'"

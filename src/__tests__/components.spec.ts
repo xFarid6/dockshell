@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 
 const invoke = vi.fn();
@@ -126,6 +126,71 @@ describe("ContainerTable", () => {
 
     await w.find("tr[data-state]").trigger("click");
     expect(w.emitted("detail")).toEqual([["abc123def456"]]);
+  });
+
+  describe("live container events (#10)", () => {
+    let handler: EventHandler | undefined;
+    const unlistenFn = vi.fn();
+
+    beforeEach(() => {
+      invoke.mockReset();
+      invoke.mockResolvedValue(undefined);
+      listen.mockReset();
+      unlistenFn.mockReset();
+      listen.mockImplementation((_event: string, h: EventHandler) => {
+        handler = h;
+        return Promise.resolve(unlistenFn);
+      });
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("starts an event stream and emits a debounced refresh on a container event", async () => {
+      const w = mount(ContainerTable, {
+        props: { containers, busy: false, connectionId: "c1" },
+      });
+      await flushPromises();
+
+      expect(listen).toHaveBeenCalledWith("container-event:c1", expect.any(Function));
+      expect(invoke).toHaveBeenCalledWith("start_event_stream", { connectionId: "c1" });
+
+      handler?.({ payload: { action: "start", containerId: "abc", containerName: "web" } });
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(w.emitted("refresh")).toHaveLength(1);
+    });
+
+    it("coalesces a burst of events into a single refresh", async () => {
+      const w = mount(ContainerTable, {
+        props: { containers, busy: false, connectionId: "c1" },
+      });
+      await flushPromises();
+
+      for (let i = 0; i < 5; i++) {
+        handler?.({ payload: { action: "start", containerId: `c${i}`, containerName: null } });
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(w.emitted("refresh")).toHaveLength(1);
+    });
+
+    it("stops the previous event stream when connectionId changes", async () => {
+      const w = mount(ContainerTable, {
+        props: { containers, busy: false, connectionId: "c1" },
+      });
+      await flushPromises();
+
+      await w.setProps({ connectionId: "c2" });
+      await flushPromises();
+
+      expect(unlistenFn).toHaveBeenCalled();
+      expect(invoke).toHaveBeenCalledWith("stop_event_stream", { connectionId: "c1" });
+      expect(invoke).toHaveBeenCalledWith("start_event_stream", { connectionId: "c2" });
+    });
   });
 });
 
