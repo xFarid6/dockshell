@@ -14,6 +14,7 @@ src/                      Vue 3 + TS frontend
     ConnectionList.vue    saved hosts, select/delete
     ConnectionForm.vue    add host (endpoint "local" or tcp://…)
     ContainerTable.vue    name/image/state/status/ports + start/stop/restart
+    ContainerDetail.vue   inspect view — env/mounts/ports/labels (issue #8)
     TaskLogPanel.vue      task results; log *streaming* is issue #1
   __tests__/              Vitest (happy-dom); deferred.spec.ts = todo surface
 

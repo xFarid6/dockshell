@@ -21,6 +21,32 @@ export interface ContainerInfo {
 
 export type ContainerAction = "start" | "stop" | "restart";
 
+export interface MountInfo {
+  source: string;
+  destination: string;
+  mode: string;
+}
+
+export interface PortBinding {
+  containerPort: string;
+  hostIp: string;
+  hostPort: string;
+}
+
+export interface ContainerDetail {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  health: string | null;
+  created: string;
+  restartPolicy: string;
+  env: string[];
+  labels: Record<string, string>;
+  mounts: MountInfo[];
+  ports: PortBinding[];
+}
+
 export interface LogLine {
   stream: string;
   message: string;
@@ -46,6 +72,9 @@ export const containerAction = (
   containerId: string,
   action: ContainerAction,
 ) => invoke<void>("container_action", { connectionId, containerId, action });
+
+export const inspectContainer = (connectionId: string, containerId: string) =>
+  invoke<ContainerDetail>("inspect_container", { connectionId, containerId });
 
 export const startLogStream = (connectionId: string, containerId: string) =>
   invoke<void>("start_log_stream", { connectionId, containerId });

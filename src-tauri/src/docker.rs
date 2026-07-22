@@ -1,13 +1,14 @@
 //! Thin wrapper around bollard: build a client from a saved connection and
 //! expose the few operations the scaffold needs (list, start/stop/restart).
 
+use std::collections::HashMap;
 use std::pin::Pin;
 
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::query_parameters::{
-    ListContainersOptionsBuilder, LogsOptionsBuilder, ResizeExecOptionsBuilder,
-    RestartContainerOptions, StartContainerOptions, StopContainerOptions,
+    InspectContainerOptions, ListContainersOptionsBuilder, LogsOptionsBuilder,
+    ResizeExecOptionsBuilder, RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
 use futures_util::{Stream, StreamExt};
@@ -96,6 +97,102 @@ pub async fn container_action(docker: &Docker, id: &str, action: &str) -> Result
             .map_err(|e| e.to_string()),
         other => Err(format!("unknown container action: {other}")),
     }
+}
+
+/// A bind/volume mount attached to a container.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MountInfo {
+    pub source: String,
+    pub destination: String,
+    pub mode: String,
+}
+
+/// A host port bound to a container port (`"80/tcp"` etc).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortBinding {
+    pub container_port: String,
+    pub host_ip: String,
+    pub host_port: String,
+}
+
+/// Everything `docker inspect` gives us that the detail panel renders.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerDetail {
+    pub id: String,
+    pub name: String,
+    pub image: String,
+    pub state: String,
+    pub health: Option<String>,
+    pub created: String,
+    pub restart_policy: String,
+    pub env: Vec<String>,
+    pub labels: HashMap<String, String>,
+    pub mounts: Vec<MountInfo>,
+    pub ports: Vec<PortBinding>,
+}
+
+pub async fn inspect_container(docker: &Docker, id: &str) -> Result<ContainerDetail, String> {
+    let info = docker
+        .inspect_container(id, Some(InspectContainerOptions::default()))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let config = info.config.unwrap_or_default();
+    let host_config = info.host_config.unwrap_or_default();
+    let state = info.state.unwrap_or_default();
+    let network_settings = info.network_settings.unwrap_or_default();
+
+    let ports = network_settings
+        .ports
+        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|(container_port, bindings)| {
+            bindings
+                .unwrap_or_default()
+                .into_iter()
+                .map(move |b| PortBinding {
+                    container_port: container_port.clone(),
+                    host_ip: b.host_ip.unwrap_or_default(),
+                    host_port: b.host_port.unwrap_or_default(),
+                })
+        })
+        .collect();
+
+    let mounts = info
+        .mounts
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| MountInfo {
+            source: m.source.unwrap_or_default(),
+            destination: m.destination.unwrap_or_default(),
+            mode: m.mode.unwrap_or_default(),
+        })
+        .collect();
+
+    Ok(ContainerDetail {
+        id: info.id.unwrap_or_default(),
+        name: info
+            .name
+            .unwrap_or_default()
+            .trim_start_matches('/')
+            .to_string(),
+        image: config.image.unwrap_or_default(),
+        state: state.status.map(|s| s.to_string()).unwrap_or_default(),
+        health: state.health.and_then(|h| h.status).map(|s| s.to_string()),
+        created: info.created.unwrap_or_default(),
+        restart_policy: host_config
+            .restart_policy
+            .and_then(|p| p.name)
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+        env: config.env.unwrap_or_default(),
+        labels: config.labels.unwrap_or_default(),
+        mounts,
+        ports,
+    })
 }
 
 /// One line of container log output, tagged by which stream it came from.

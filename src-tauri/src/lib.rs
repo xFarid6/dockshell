@@ -15,6 +15,7 @@ pub fn run() {
             commands::test_connection,
             commands::list_containers,
             commands::container_action,
+            commands::inspect_container,
             commands::start_log_stream,
             commands::stop_log_stream,
             commands::start_exec,

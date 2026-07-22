@@ -10,6 +10,7 @@ defineEmits<{
   action: [containerId: string, action: ContainerAction];
   logs: [containerId: string];
   exec: [containerId: string];
+  detail: [containerId: string];
 }>();
 </script>
 
@@ -30,13 +31,18 @@ defineEmits<{
         v-for="c in containers"
         :key="c.id"
         :data-state="c.state"
+        class="row"
+        @click="$emit('detail', c.id)"
       >
         <td>{{ c.name }}</td>
         <td>{{ c.image }}</td>
         <td>{{ c.state }}</td>
         <td>{{ c.status }}</td>
         <td>{{ c.ports.join(", ") }}</td>
-        <td class="actions">
+        <td
+          class="actions"
+          @click.stop
+        >
           <button
             :disabled="busy || c.state === 'running'"
             @click="$emit('action', c.id, 'start')"
@@ -94,6 +100,12 @@ td {
   margin-right: 0.3rem;
   padding: 0.2rem 0.6rem;
   font-size: 0.8rem;
+}
+.row {
+  cursor: pointer;
+}
+.row:hover {
+  background-color: rgba(128, 128, 128, 0.1);
 }
 .empty {
   opacity: 0.6;

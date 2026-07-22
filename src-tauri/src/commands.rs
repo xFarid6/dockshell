@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::connections::{self, ConnectionInfo};
-use crate::docker::{self, ContainerInfo, ExecInput};
+use crate::docker::{self, ContainerDetail, ContainerInfo, ExecInput};
 
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -64,6 +64,17 @@ pub async fn container_action(
     let info = connections::get(&store_dir(&app)?, &connection_id)?;
     let client = docker::client_for(&info)?;
     docker::container_action(&client, &container_id, &action).await
+}
+
+#[tauri::command]
+pub async fn inspect_container(
+    app: tauri::AppHandle,
+    connection_id: String,
+    container_id: String,
+) -> Result<ContainerDetail, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::inspect_container(&client, &container_id).await
 }
 
 /// Tracks the in-flight log-follow task per container so a new "Logs" click
