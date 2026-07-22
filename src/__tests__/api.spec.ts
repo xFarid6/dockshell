@@ -12,8 +12,10 @@ import {
   listConnections,
   listContainers,
   listImages,
+  listVolumes,
   pullImage,
   removeImage,
+  removeVolume,
   resizeExec,
   saveConnection,
   startEventStream,
@@ -113,6 +115,20 @@ describe("api wrappers", () => {
       name: null,
       ports: [],
       env: [],
+    });
+  });
+
+  it("list_volumes passes the connection id", async () => {
+    invoke.mockResolvedValue([]);
+    await listVolumes("c1");
+    expect(invoke).toHaveBeenCalledWith("list_volumes", { connectionId: "c1" });
+  });
+
+  it("remove_volume passes connection id and volume name", async () => {
+    await removeVolume("c1", "data");
+    expect(invoke).toHaveBeenCalledWith("remove_volume", {
+      connectionId: "c1",
+      name: "data",
     });
   });
 

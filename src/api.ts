@@ -76,6 +76,15 @@ export interface ContainerEvent {
   containerName: string | null;
 }
 
+export interface VolumeInfo {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  created: string;
+  labels: Record<string, string>;
+  usedBy: string[];
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -138,6 +147,12 @@ export const startEventStream = (connectionId: string) =>
 
 export const stopEventStream = (connectionId: string) =>
   invoke<void>("stop_event_stream", { connectionId });
+
+export const listVolumes = (connectionId: string) =>
+  invoke<VolumeInfo[]>("list_volumes", { connectionId });
+
+export const removeVolume = (connectionId: string, name: string) =>
+  invoke<void>("remove_volume", { connectionId, name });
 
 export type ExecShell = "/bin/sh" | "/bin/bash";
 
