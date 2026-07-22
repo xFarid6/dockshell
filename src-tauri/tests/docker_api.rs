@@ -325,6 +325,85 @@ async fn removes_an_image_via_engine_api() {
         .unwrap();
 }
 
+#[tokio::test]
+async fn prunes_containers_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^(/v[0-9.]+)?/containers/prune$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ContainersDeleted": ["abc123", "def456"],
+            "SpaceReclaimed": 4096i64
+        })))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let result = docker::prune_containers(&client).await.unwrap();
+    assert_eq!(
+        result.deleted,
+        vec!["abc123".to_string(), "def456".to_string()]
+    );
+    assert_eq!(result.space_reclaimed, Some(4096));
+}
+
+#[tokio::test]
+async fn prunes_images_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^(/v[0-9.]+)?/images/prune$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ImagesDeleted": [{ "Deleted": "sha256:abc123" }, { "Untagged": "old:tag" }],
+            "SpaceReclaimed": 8192i64
+        })))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let result = docker::prune_images(&client).await.unwrap();
+    assert_eq!(
+        result.deleted,
+        vec!["sha256:abc123".to_string(), "old:tag".to_string()]
+    );
+    assert_eq!(result.space_reclaimed, Some(8192));
+}
+
+#[tokio::test]
+async fn prunes_volumes_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^(/v[0-9.]+)?/volumes/prune$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "VolumesDeleted": ["data"],
+            "SpaceReclaimed": 1024i64
+        })))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let result = docker::prune_volumes(&client).await.unwrap();
+    assert_eq!(result.deleted, vec!["data".to_string()]);
+    assert_eq!(result.space_reclaimed, Some(1024));
+}
+
+/// Networks have no `SpaceReclaimed` field in the Engine API response —
+/// there's no disk space to reclaim by removing a network.
+#[tokio::test]
+async fn prunes_networks_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks/prune$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "NetworksDeleted": ["custom-net"]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let result = docker::prune_networks(&client).await.unwrap();
+    assert_eq!(result.deleted, vec!["custom-net".to_string()]);
+    assert_eq!(result.space_reclaimed, None);
+}
+
 /// The Engine API streams `/images/create` as newline-delimited JSON objects
 /// (bollard decodes with `JsonLineDecoder`), one per progress update.
 #[tokio::test]

@@ -11,7 +11,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::connections::{self, ConnectionInfo};
-use crate::docker::{self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, PortMapping};
+use crate::docker::{
+    self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, PortMapping, PruneResult,
+};
 
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -113,6 +115,46 @@ pub async fn remove_image(
     let info = connections::get(&store_dir(&app)?, &connection_id)?;
     let client = docker::client_for(&info)?;
     docker::remove_image(&client, &image, force).await
+}
+
+#[tauri::command]
+pub async fn prune_containers(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<PruneResult, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::prune_containers(&client).await
+}
+
+#[tauri::command]
+pub async fn prune_images(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<PruneResult, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::prune_images(&client).await
+}
+
+#[tauri::command]
+pub async fn prune_volumes(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<PruneResult, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::prune_volumes(&client).await
+}
+
+#[tauri::command]
+pub async fn prune_networks(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<PruneResult, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::prune_networks(&client).await
 }
 
 /// Pull an image, forwarding layer-by-layer progress as `pull-progress:{image}`

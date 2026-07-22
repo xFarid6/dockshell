@@ -12,6 +12,10 @@ import {
   listConnections,
   listContainers,
   listImages,
+  pruneContainers,
+  pruneImages,
+  pruneNetworks,
+  pruneVolumes,
   pullImage,
   removeImage,
   resizeExec,
@@ -171,5 +175,29 @@ describe("api wrappers", () => {
   it("stop_exec passes the exec id", async () => {
     await stopExec("exec1");
     expect(invoke).toHaveBeenCalledWith("stop_exec", { execId: "exec1" });
+  });
+
+  it("prune_containers passes the connection id", async () => {
+    invoke.mockResolvedValue({ deleted: [], spaceReclaimed: 0 });
+    await pruneContainers("c1");
+    expect(invoke).toHaveBeenCalledWith("prune_containers", { connectionId: "c1" });
+  });
+
+  it("prune_images passes the connection id", async () => {
+    invoke.mockResolvedValue({ deleted: [], spaceReclaimed: 0 });
+    await pruneImages("c1");
+    expect(invoke).toHaveBeenCalledWith("prune_images", { connectionId: "c1" });
+  });
+
+  it("prune_volumes passes the connection id", async () => {
+    invoke.mockResolvedValue({ deleted: [], spaceReclaimed: 0 });
+    await pruneVolumes("c1");
+    expect(invoke).toHaveBeenCalledWith("prune_volumes", { connectionId: "c1" });
+  });
+
+  it("prune_networks passes the connection id", async () => {
+    invoke.mockResolvedValue({ deleted: [], spaceReclaimed: null });
+    await pruneNetworks("c1");
+    expect(invoke).toHaveBeenCalledWith("prune_networks", { connectionId: "c1" });
   });
 });
