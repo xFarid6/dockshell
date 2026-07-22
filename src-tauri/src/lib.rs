@@ -9,6 +9,7 @@ pub fn run() {
         .manage(commands::LogStreams::default())
         .manage(commands::EventStreams::default())
         .manage(commands::ExecSessions::default())
+        .manage(commands::HealthMonitors::default())
         .invoke_handler(tauri::generate_handler![
             commands::list_connections,
             commands::save_connection,
@@ -29,6 +30,8 @@ pub fn run() {
             commands::write_exec_input,
             commands::resize_exec,
             commands::stop_exec,
+            commands::refresh_health_monitors,
+            commands::stop_health_monitors,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

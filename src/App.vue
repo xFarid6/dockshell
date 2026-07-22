@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { onMounted, onUnmounted, ref } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   containerAction,
   createContainer,
@@ -9,12 +9,15 @@ import {
   listContainers,
   listImages,
   pullImage,
+  refreshHealthMonitors,
   removeImage,
   saveConnection,
+  stopHealthMonitors,
   testConnection,
   type ConnectionInfo,
   type ContainerAction,
   type ContainerInfo,
+  type HealthEvent,
   type ImageInfo,
   type PortMapping,
   type PullProgress,
@@ -27,6 +30,9 @@ import CreateContainerDialog from "./components/CreateContainerDialog.vue";
 import ExecTerminal from "./components/ExecTerminal.vue";
 import ImageTable from "./components/ImageTable.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
+
+const health = ref<Record<string, HealthEvent>>({});
+let healthUnlisten: UnlistenFn | null = null;
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
@@ -107,6 +113,7 @@ function onDetail(containerId: string) {
 async function onSave(info: ConnectionInfo, secret: string | undefined) {
   await saveConnection(info, secret);
   await refreshConnections();
+  await refreshHealthMonitors();
   logTask(`saved connection "${info.name}"`);
 }
 
@@ -118,7 +125,9 @@ async function onRemove(id: string) {
     logsContainerId.value = null;
     execContainerId.value = null;
   }
+  delete health.value[id];
   await refreshConnections();
+  await refreshHealthMonitors();
 }
 
 async function onTest() {
@@ -194,7 +203,18 @@ async function onRemoveImage(image: string) {
   await refreshImages();
 }
 
-onMounted(refreshConnections);
+onMounted(async () => {
+  await refreshConnections();
+  healthUnlisten = await listen<HealthEvent>("connection-health", (event) => {
+    health.value = { ...health.value, [event.payload.connectionId]: event.payload };
+  });
+  await refreshHealthMonitors();
+});
+
+onUnmounted(() => {
+  healthUnlisten?.();
+  stopHealthMonitors();
+});
 </script>
 
 <template>
@@ -204,6 +224,7 @@ onMounted(refreshConnections);
       <ConnectionList
         :connections="connections"
         :active-id="activeId"
+        :health="health"
         @select="onSelect"
         @remove="onRemove"
       />

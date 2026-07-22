@@ -95,6 +95,22 @@ async fn ping_reports_engine_version() {
     assert!(msg.contains("27.3.1"));
 }
 
+/// Health monitoring (#11) treats a failed ping as "unreachable" — the
+/// engine returning an error status must surface as `Err`, not panic or a
+/// blank success.
+#[tokio::test]
+async fn ping_reports_error_on_unreachable_engine() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/version$"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    assert!(docker::ping(&client).await.is_err());
+}
+
 /// Docker's log endpoint multiplexes stdout/stderr with an 8-byte header per
 /// frame: [stream type, 0, 0, 0, big-endian u32 length], then that many
 /// payload bytes. See bollard's `NewlineLogOutputDecoder`.

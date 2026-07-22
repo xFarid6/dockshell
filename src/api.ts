@@ -76,6 +76,14 @@ export interface ContainerEvent {
   containerName: string | null;
 }
 
+export type HealthStatus = "connecting" | "connected" | "unreachable";
+
+export interface HealthEvent {
+  connectionId: string;
+  status: HealthStatus;
+  error: string | null;
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -156,3 +164,9 @@ export const resizeExec = (execId: string, cols: number, rows: number) =>
 
 export const stopExec = (execId: string) =>
   invoke<void>("stop_exec", { execId });
+
+/** (Re)starts health polling for every saved connection; updates arrive as `connection-health` events. */
+export const refreshHealthMonitors = () =>
+  invoke<void>("refresh_health_monitors");
+
+export const stopHealthMonitors = () => invoke<void>("stop_health_monitors");
