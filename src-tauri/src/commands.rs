@@ -7,9 +7,10 @@ use std::sync::{Arc, Mutex};
 use bollard::Docker;
 use futures_util::StreamExt;
 use tauri::{async_runtime::JoinHandle, Emitter, Manager};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::compose;
 use crate::connections::{self, ConnectionInfo};
 use crate::docker::{self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, PortMapping};
 
@@ -133,6 +134,80 @@ pub async fn pull_image(
         let _ = app.emit(&event, progress);
     }
     Ok(())
+}
+
+/// Forward `docker compose`'s stdout/stderr to the frontend as `compose-output`
+/// events while the command is in flight, then resolve once the process
+/// exits (erroring on a non-zero exit status).
+async fn run_compose(
+    app: &tauri::AppHandle,
+    connection_id: &str,
+    file: &str,
+    args: &[&str],
+) -> Result<(), String> {
+    let info = connections::get(&store_dir(app)?, connection_id)?;
+    compose::ensure_local(&info)?;
+
+    let mut child = compose::spawn_compose(file, args)?;
+    let stdout = child.stdout.take().expect("stdout piped at spawn");
+    let stderr = child.stderr.take().expect("stderr piped at spawn");
+
+    let app1 = app.clone();
+    let stdout_task = tauri::async_runtime::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(message)) = lines.next_line().await {
+            let _ = app1.emit(
+                "compose-output",
+                compose::ComposeLine {
+                    stream: "stdout".to_string(),
+                    message,
+                },
+            );
+        }
+    });
+    let app2 = app.clone();
+    let stderr_task = tauri::async_runtime::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(message)) = lines.next_line().await {
+            let _ = app2.emit(
+                "compose-output",
+                compose::ComposeLine {
+                    stream: "stderr".to_string(),
+                    message,
+                },
+            );
+        }
+    });
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("docker compose exited with status {status}"))
+    }
+}
+
+/// Run `docker compose -f <file> up -d` for the local connection.
+#[tauri::command]
+pub async fn compose_up(
+    app: tauri::AppHandle,
+    connection_id: String,
+    file: String,
+) -> Result<(), String> {
+    run_compose(&app, &connection_id, &file, &["up", "-d"]).await
+}
+
+/// Run `docker compose -f <file> down` for the local connection.
+#[tauri::command]
+pub async fn compose_down(
+    app: tauri::AppHandle,
+    connection_id: String,
+    file: String,
+) -> Result<(), String> {
+    run_compose(&app, &connection_id, &file, &["down"]).await
 }
 
 /// Tracks the in-flight log-follow task per container so a new "Logs" click
