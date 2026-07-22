@@ -16,6 +16,7 @@ pub fn run() {
             commands::list_containers,
             commands::container_action,
             commands::inspect_container,
+            commands::create_container,
             commands::list_images,
             commands::remove_image,
             commands::pull_image,

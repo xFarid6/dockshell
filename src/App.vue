@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import {
   containerAction,
+  createContainer,
   deleteConnection,
   listConnections,
   listContainers,
@@ -15,12 +16,14 @@ import {
   type ContainerAction,
   type ContainerInfo,
   type ImageInfo,
+  type PortMapping,
   type PullProgress,
 } from "./api";
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
 import ContainerDetail from "./components/ContainerDetail.vue";
 import ContainerTable from "./components/ContainerTable.vue";
+import CreateContainerDialog from "./components/CreateContainerDialog.vue";
 import ExecTerminal from "./components/ExecTerminal.vue";
 import ImageTable from "./components/ImageTable.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
@@ -37,6 +40,7 @@ const taskLog = ref<string[]>([]);
 const logsContainerId = ref<string | null>(null);
 const execContainerId = ref<string | null>(null);
 const detailContainerId = ref<string | null>(null);
+const runImage = ref<string | null>(null);
 
 function logTask(msg: string) {
   taskLog.value.unshift(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -161,6 +165,21 @@ async function onPull(image: string) {
   }
 }
 
+async function onRunImage(name: string | undefined, ports: PortMapping[], env: string[]) {
+  if (!activeId.value || !runImage.value) return;
+  const image = runImage.value;
+  imagesBusy.value = true;
+  try {
+    const id = await createContainer(activeId.value, image, name, ports, env);
+    logTask(`run ${image} — ${id.slice(0, 12)}`);
+    runImage.value = null;
+  } catch (e) {
+    logTask(`run ${image} — failed: ${e}`);
+  } finally {
+    imagesBusy.value = false;
+  }
+}
+
 async function onRemoveImage(image: string) {
   if (!activeId.value) return;
   imagesBusy.value = true;
@@ -246,6 +265,14 @@ onMounted(refreshConnections);
         :busy="imagesBusy"
         @pull="onPull"
         @remove="onRemoveImage"
+        @run="runImage = $event"
+      />
+      <CreateContainerDialog
+        v-if="activeId && view === 'images' && runImage"
+        :image="runImage"
+        :busy="imagesBusy"
+        @create="onRunImage"
+        @close="runImage = null"
       />
       <p
         v-else

@@ -10,6 +10,7 @@ defineProps<{
 const emit = defineEmits<{
   pull: [image: string];
   remove: [image: string];
+  run: [image: string];
 }>();
 
 const pullRef = ref("");
@@ -64,6 +65,12 @@ function formatCreated(unixSeconds: number): string {
           <td>{{ formatSize(img.size) }}</td>
           <td>{{ formatCreated(img.created) }}</td>
           <td class="actions">
+            <button
+              :disabled="busy"
+              @click="$emit('run', img.tags[0] ?? img.id)"
+            >
+              Run
+            </button>
             <button
               :disabled="busy"
               @click="$emit('remove', img.tags[0] ?? img.id)"

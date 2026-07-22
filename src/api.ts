@@ -65,6 +65,11 @@ export interface PullProgress {
   progress: string | null;
 }
 
+export interface PortMapping {
+  host: string;
+  container: string;
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -98,6 +103,22 @@ export const removeImage = (connectionId: string, image: string, force: boolean)
 /** Resolves once the pull completes; progress arrives as `pull-progress:{image}` events. */
 export const pullImage = (connectionId: string, image: string) =>
   invoke<void>("pull_image", { connectionId, image });
+
+/** Creates a container from `image` and starts it; returns the new container's id. */
+export const createContainer = (
+  connectionId: string,
+  image: string,
+  name: string | undefined,
+  ports: PortMapping[],
+  env: string[],
+) =>
+  invoke<string>("create_container", {
+    connectionId,
+    image,
+    name: name ?? null,
+    ports,
+    env,
+  });
 
 export const startLogStream = (connectionId: string, containerId: string) =>
   invoke<void>("start_log_stream", { connectionId, containerId });

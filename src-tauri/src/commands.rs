@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::connections::{self, ConnectionInfo};
-use crate::docker::{self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo};
+use crate::docker::{self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, PortMapping};
 
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -75,6 +75,22 @@ pub async fn inspect_container(
     let info = connections::get(&store_dir(&app)?, &connection_id)?;
     let client = docker::client_for(&info)?;
     docker::inspect_container(&client, &container_id).await
+}
+
+/// Create a container from an image and start it; returns the new
+/// container's ID.
+#[tauri::command]
+pub async fn create_container(
+    app: tauri::AppHandle,
+    connection_id: String,
+    image: String,
+    name: Option<String>,
+    ports: Vec<PortMapping>,
+    env: Vec<String>,
+) -> Result<String, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::create_and_start_container(&client, &image, name.as_deref(), &ports, &env).await
 }
 
 #[tauri::command]

@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   containerAction,
+  createContainer,
   inspectContainer,
   listConnections,
   listContainers,
@@ -85,6 +86,31 @@ describe("api wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("pull_image", {
       connectionId: "c1",
       image: "alpine:latest",
+    });
+  });
+
+  it("create_container passes image, name, ports and env", async () => {
+    invoke.mockResolvedValue("newid");
+    const ports = [{ host: "8080", container: "80" }];
+    await createContainer("c1", "nginx:latest", "web", ports, ["FOO=bar"]);
+    expect(invoke).toHaveBeenCalledWith("create_container", {
+      connectionId: "c1",
+      image: "nginx:latest",
+      name: "web",
+      ports,
+      env: ["FOO=bar"],
+    });
+  });
+
+  it("create_container defaults an omitted name to null", async () => {
+    invoke.mockResolvedValue("newid");
+    await createContainer("c1", "nginx:latest", undefined, [], []);
+    expect(invoke).toHaveBeenCalledWith("create_container", {
+      connectionId: "c1",
+      image: "nginx:latest",
+      name: null,
+      ports: [],
+      env: [],
     });
   });
 

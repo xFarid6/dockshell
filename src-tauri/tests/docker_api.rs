@@ -170,6 +170,58 @@ async fn handles_invalid_utf8_in_log_message() {
 }
 
 #[tokio::test]
+async fn creates_and_starts_a_container_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^(/v[0-9.]+)?/containers/create$"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "Id": "newid123",
+            "Warnings": []
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^(/v[0-9.]+)?/containers/newid123/start$"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let ports = vec![docker::PortMapping {
+        host: "8080".into(),
+        container: "80".into(),
+    }];
+    let env = vec!["FOO=bar".to_string()];
+    let id = docker::create_and_start_container(&client, "nginx:latest", Some("web"), &ports, &env)
+        .await
+        .unwrap();
+    assert_eq!(id, "newid123");
+
+    let requests = server.received_requests().await.unwrap();
+    let create_req = requests
+        .iter()
+        .find(|r| r.url.path().ends_with("/containers/create"))
+        .expect("create request recorded");
+    assert!(create_req
+        .url
+        .query()
+        .unwrap_or_default()
+        .contains("name=web"));
+
+    let body: serde_json::Value = serde_json::from_slice(&create_req.body).unwrap();
+    assert_eq!(body["Image"], "nginx:latest");
+    assert_eq!(body["Env"], serde_json::json!(["FOO=bar"]));
+    assert!(body["ExposedPorts"]["80/tcp"].is_object());
+    let bindings = &body["HostConfig"]["PortBindings"]["80/tcp"][0];
+    assert_eq!(bindings["HostPort"], "8080");
+
+    let start_req = requests
+        .iter()
+        .find(|r| r.url.path().ends_with("/containers/newid123/start"));
+    assert!(start_req.is_some());
+}
+
+#[tokio::test]
 async fn inspects_container_from_engine_api() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
