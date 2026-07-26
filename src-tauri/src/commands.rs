@@ -183,6 +183,10 @@ async fn run_compose(
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
+    compose_result(status)
+}
+
+fn compose_result(status: std::process::ExitStatus) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
@@ -425,6 +429,30 @@ pub fn stop_exec(state: tauri::State<'_, ExecSessions>, exec_id: String) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exit_status(code: i32) -> std::process::ExitStatus {
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/C", "exit"])
+        } else {
+            ("sh", &["-c", "exit"])
+        };
+        std::process::Command::new(program)
+            .args(args)
+            .arg(code.to_string())
+            .status()
+            .expect("spawn a trivial process")
+    }
+
+    #[test]
+    fn compose_result_ok_on_success_status() {
+        assert_eq!(compose_result(exit_status(0)), Ok(()));
+    }
+
+    #[test]
+    fn compose_result_err_on_nonzero_status() {
+        let err = compose_result(exit_status(3)).unwrap_err();
+        assert!(err.contains("docker compose exited with status"));
+    }
 
     /// Stopping a container that never had a stream (or was already
     /// stopped) must be a no-op, not a panic — the frontend calls
