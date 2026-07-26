@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import {
+  composeDown,
+  composeUp,
   containerAction,
   createContainer,
   deleteConnection,
@@ -16,6 +18,7 @@ import {
   saveConnection,
   saveSettings,
   testConnection,
+  type ComposeLine,
   type ConnectionInfo,
   type ContainerAction,
   type ContainerInfo,
@@ -25,6 +28,7 @@ import {
   type Settings,
   type VolumeInfo,
 } from "./api";
+import ComposePanel from "./components/ComposePanel.vue";
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
 import ContainerDetail from "./components/ContainerDetail.vue";
@@ -72,7 +76,11 @@ async function onSaveSettings(next: Settings) {
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
-const view = ref<"containers" | "images" | "volumes">("containers");
+const view = ref<"containers" | "images" | "volumes" | "compose">("containers");
+const composeBusy = ref(false);
+const isLocalConnection = computed(
+  () => connections.value.find((c) => c.id === activeId.value)?.endpoint === "local",
+);
 const containers = ref<ContainerInfo[]>([]);
 const images = ref<ImageInfo[]>([]);
 const volumes = ref<VolumeInfo[]>([]);
@@ -146,7 +154,7 @@ async function onSelect(id: string) {
   if (view.value === "volumes") await refreshVolumes();
 }
 
-async function onSwitchView(next: "containers" | "images" | "volumes") {
+async function onSwitchView(next: "containers" | "images" | "volumes" | "compose") {
   view.value = next;
   if (next === "images") await refreshImages();
   if (next === "volumes") await refreshVolumes();
@@ -268,6 +276,38 @@ async function onRemoveImage(image: string) {
   await refreshImages();
 }
 
+async function runCompose(
+  action: "up" | "down",
+  file: string,
+  run: (connectionId: string, file: string) => Promise<void>,
+) {
+  if (!activeId.value) return;
+  const connectionId = activeId.value;
+  composeBusy.value = true;
+  logTask(`compose ${action} ${file} — starting`);
+  const unlisten = await listen<ComposeLine>("compose-output", (event) => {
+    logTask(`compose ${action} — ${event.payload.message}`);
+  });
+  try {
+    await run(connectionId, file);
+    logTask(`compose ${action} ${file} — done`);
+  } catch (e) {
+    logTask(`compose ${action} ${file} — failed: ${e}`);
+  } finally {
+    unlisten();
+    composeBusy.value = false;
+    if (action === "up") await refreshContainers();
+  }
+}
+
+async function onComposeUp(file: string) {
+  await runCompose("up", file, composeUp);
+}
+
+async function onComposeDown(file: string) {
+  await runCompose("down", file, composeDown);
+}
+
 onMounted(() => {
   refreshConnections();
   refreshSettings();
@@ -307,6 +347,12 @@ onMounted(() => {
           >
             Volumes
           </button>
+          <button
+            :class="{ active: view === 'compose' }"
+            @click="onSwitchView('compose')"
+          >
+            Compose
+          </button>
         </nav>
         <button
           v-if="view === 'containers'"
@@ -323,7 +369,7 @@ onMounted(() => {
           Refresh
         </button>
         <button
-          v-else
+          v-else-if="view === 'volumes'"
           :disabled="!activeId || volumesBusy"
           @click="refreshVolumes"
         >
@@ -370,6 +416,13 @@ onMounted(() => {
         :volumes="volumes"
         :busy="volumesBusy"
         @remove="onRemoveVolume"
+      />
+      <ComposePanel
+        v-else-if="activeId && view === 'compose'"
+        :is-local="isLocalConnection"
+        :busy="composeBusy"
+        @up="onComposeUp"
+        @down="onComposeDown"
       />
       <CreateContainerDialog
         v-if="activeId && view === 'images' && runImage"

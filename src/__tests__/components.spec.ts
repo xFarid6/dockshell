@@ -12,6 +12,12 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => listen(...args),
 }));
 
+const open = vi.fn();
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: (...args: unknown[]) => open(...args),
+}));
+
+import ComposePanel from "../components/ComposePanel.vue";
 import ConnectionList from "../components/ConnectionList.vue";
 import ContainerDetail from "../components/ContainerDetail.vue";
 import ContainerTable from "../components/ContainerTable.vue";
@@ -417,6 +423,60 @@ describe("ContainerDetail", () => {
 
     await w.find("button.close").trigger("click");
     expect(w.emitted("close")).toHaveLength(1);
+  });
+});
+
+describe("ComposePanel (#6)", () => {
+  beforeEach(() => {
+    open.mockReset();
+  });
+
+  it("shows a notice and disables inputs for a non-local connection", () => {
+    const w = mount(ComposePanel, { props: { isLocal: false, busy: false } });
+    expect(w.text()).toContain("Compose requires a local connection");
+    expect(w.find("input").attributes("disabled")).toBeDefined();
+  });
+
+  it("does not emit up/down for a blank file path", async () => {
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: false } });
+    const buttons = w.findAll("button");
+    await buttons[1].trigger("click"); // Up
+    await buttons[2].trigger("click"); // Down
+    expect(w.emitted("up")).toBeUndefined();
+    expect(w.emitted("down")).toBeUndefined();
+  });
+
+  it("emits up/down with the trimmed file path", async () => {
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: false } });
+    await w.find("input").setValue("  /stacks/app.yml  ");
+    const buttons = w.findAll("button");
+    await buttons[1].trigger("click"); // Up
+    await buttons[2].trigger("click"); // Down
+    expect(w.emitted("up")).toEqual([["/stacks/app.yml"]]);
+    expect(w.emitted("down")).toEqual([["/stacks/app.yml"]]);
+  });
+
+  it("does not emit while busy, even with a file path set", async () => {
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: true } });
+    await w.find("input").setValue("/stacks/app.yml");
+    await w.findAll("button")[1].trigger("click"); // Up
+    expect(w.emitted("up")).toBeUndefined();
+  });
+
+  it("fills the file path from the browse dialog", async () => {
+    open.mockResolvedValue("/picked/compose.yml");
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: false } });
+    await w.findAll("button")[0].trigger("click"); // Browse…
+    await flushPromises();
+    expect((w.find("input").element as HTMLInputElement).value).toBe("/picked/compose.yml");
+  });
+
+  it("ignores a cancelled browse dialog", async () => {
+    open.mockResolvedValue(null);
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: false } });
+    await w.findAll("button")[0].trigger("click"); // Browse…
+    await flushPromises();
+    expect((w.find("input").element as HTMLInputElement).value).toBe("");
   });
 });
 

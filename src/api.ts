@@ -178,6 +178,19 @@ export const resizeExec = (execId: string, cols: number, rows: number) =>
 export const stopExec = (execId: string) =>
   invoke<void>("stop_exec", { execId });
 
+export interface ComposeLine {
+  stream: string;
+  message: string;
+}
+
+/** Runs `docker compose -f file up -d`; only works for the local connection. Output arrives as `compose-output` events. */
+export const composeUp = (connectionId: string, file: string) =>
+  invoke<void>("compose_up", { connectionId, file });
+
+/** Runs `docker compose -f file down`; only works for the local connection. Output arrives as `compose-output` events. */
+export const composeDown = (connectionId: string, file: string) =>
+  invoke<void>("compose_down", { connectionId, file });
+
 export const getSettings = () => invoke<Settings>("get_settings");
 
 export const saveSettings = (settings: Settings) =>
