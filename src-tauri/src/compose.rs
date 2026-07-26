@@ -84,6 +84,8 @@ mod tests {
             name: "test".into(),
             endpoint: endpoint.into(),
             use_tls: false,
+            client_cert_path: None,
+            ca_cert_path: None,
         }
     }
 

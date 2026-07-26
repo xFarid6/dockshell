@@ -7,7 +7,10 @@ export interface ConnectionInfo {
   name: string;
   /** "local" for the platform socket, or tcp://host:port for remote. */
   endpoint: string;
+  /** When true, connect over mutual TLS; the client key lives in the keyring (see `saveConnection`'s secret param). */
   useTls: boolean;
+  clientCertPath?: string | null;
+  caCertPath?: string | null;
 }
 
 export interface ContainerInfo {

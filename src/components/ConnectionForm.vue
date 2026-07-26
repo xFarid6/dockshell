@@ -9,7 +9,9 @@ const emit = defineEmits<{
 const name = ref("");
 const endpoint = ref("tcp://192.168.1.105:2375");
 const useTls = ref(false);
-const secret = ref("");
+const clientCertPath = ref("");
+const caCertPath = ref("");
+const keyPem = ref("");
 
 function submit() {
   if (!name.value.trim() || !endpoint.value.trim()) return;
@@ -20,11 +22,15 @@ function submit() {
       name: name.value.trim(),
       endpoint: endpoint.value.trim(),
       useTls: useTls.value,
+      clientCertPath: useTls.value ? clientCertPath.value.trim() || undefined : undefined,
+      caCertPath: useTls.value ? caCertPath.value.trim() || undefined : undefined,
     },
-    secret.value || undefined,
+    useTls.value ? keyPem.value || undefined : undefined,
   );
   name.value = "";
-  secret.value = "";
+  clientCertPath.value = "";
+  caCertPath.value = "";
+  keyPem.value = "";
 }
 </script>
 
@@ -46,13 +52,23 @@ function submit() {
         v-model="useTls"
         type="checkbox"
       >
-      TLS (client cert — issue #7)
+      TLS (client cert)
     </label>
-    <input
-      v-model="secret"
-      type="password"
-      placeholder="Secret (optional, stored in OS keyring)"
-    >
+    <template v-if="useTls">
+      <input
+        v-model="clientCertPath"
+        placeholder="Client cert path (cert.pem)"
+      >
+      <input
+        v-model="caCertPath"
+        placeholder="CA cert path (ca.pem)"
+      >
+      <input
+        v-model="keyPem"
+        type="password"
+        placeholder="Client key PEM (stored in OS keyring)"
+      >
+    </template>
     <button type="submit">
       Add connection
     </button>

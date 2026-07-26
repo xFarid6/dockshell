@@ -2,6 +2,8 @@
 //! expose the few operations the scaffold needs (list, start/stop/restart).
 
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use bollard::container::LogOutput;
@@ -20,7 +22,25 @@ use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 
-use crate::connections::ConnectionInfo;
+use crate::connections::{self, ConnectionInfo};
+
+/// The client key PEM lives in the keyring, but bollard's TLS client-cert
+/// resolver reads it from a file path on every handshake (`pool_max_idle_per_host(0)`
+/// means that can be more than once per connection) — so we materialize it
+/// to a private per-connection file each time we connect.
+// ponytail: decrypted key cached on disk under the OS user profile rather
+// than held only in memory; acceptable for v1 (no weaker than the ~/.docker
+// convention Docker's own CLI uses) — revisit if bollard grows an in-memory
+// client-cert resolver.
+fn materialize_key_file(connection_id: &str) -> Result<PathBuf, String> {
+    let key_pem = connections::get_secret(connection_id)
+        .map_err(|e| format!("no client key stored for this connection: {e}"))?;
+    let dir = std::env::temp_dir().join("dockshell-tls");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{connection_id}.pem"));
+    fs::write(&path, key_pem).map_err(|e| e.to_string())?;
+    Ok(path)
+}
 
 /// What the frontend renders per container row.
 #[derive(Debug, Clone, Serialize)]
@@ -36,12 +56,31 @@ pub struct ContainerInfo {
 
 pub fn client_for(info: &ConnectionInfo) -> Result<Docker, String> {
     if info.endpoint == "local" {
-        Docker::connect_with_local_defaults().map_err(|e| e.to_string())
-    } else {
-        // tcp:// and http:// both accepted. TLS client certs are issue #7.
-        Docker::connect_with_http(&info.endpoint, 10, bollard::API_DEFAULT_VERSION)
-            .map_err(|e| e.to_string())
+        return Docker::connect_with_local_defaults().map_err(|e| e.to_string());
     }
+    if info.use_tls {
+        let cert_path = info
+            .client_cert_path
+            .as_deref()
+            .ok_or("TLS is enabled but no client certificate path is set")?;
+        let ca_path = info
+            .ca_cert_path
+            .as_deref()
+            .ok_or("TLS is enabled but no CA certificate path is set")?;
+        let key_path = materialize_key_file(&info.id)?;
+        return Docker::connect_with_ssl(
+            &info.endpoint,
+            &key_path,
+            Path::new(cert_path),
+            Path::new(ca_path),
+            10,
+            bollard::API_DEFAULT_VERSION,
+        )
+        .map_err(|e| e.to_string());
+    }
+    // tcp:// and http:// both accepted.
+    Docker::connect_with_http(&info.endpoint, 10, bollard::API_DEFAULT_VERSION)
+        .map_err(|e| e.to_string())
 }
 
 pub async fn ping(docker: &Docker) -> Result<String, String> {
@@ -677,5 +716,53 @@ mod network_tests {
     #[test]
     fn accepts_removing_a_user_network() {
         assert!(ensure_removable("my-net").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod tls_tests {
+    use super::*;
+
+    fn tls_conn(cert: Option<&str>, ca: Option<&str>) -> ConnectionInfo {
+        ConnectionInfo {
+            id: "docker-rs-tls-test".into(),
+            name: "remote".into(),
+            endpoint: "tcp://192.168.1.105:2376".into(),
+            use_tls: true,
+            client_cert_path: cert.map(String::from),
+            ca_cert_path: ca.map(String::from),
+        }
+    }
+
+    #[test]
+    fn requires_a_client_cert_path() {
+        let err = client_for(&tls_conn(None, Some("/ca.pem"))).unwrap_err();
+        assert!(err.contains("client certificate path"));
+    }
+
+    #[test]
+    fn requires_a_ca_cert_path() {
+        let err = client_for(&tls_conn(Some("/cert.pem"), None)).unwrap_err();
+        assert!(err.contains("CA certificate path"));
+    }
+
+    // Exercises the real OS keyring (via connections::get_secret), same as
+    // connections::tests::keyring_secret_roundtrip; run locally with --ignored.
+    #[test]
+    #[ignore = "requires a real OS keyring; run locally with --ignored"]
+    fn materializes_the_key_from_the_keyring() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "dockshell-test-tls-key";
+        let mut conn = tls_conn(Some("/cert.pem"), Some("/ca.pem"));
+        conn.id = id.into();
+        connections::save(dir.path(), conn, Some("-----BEGIN KEY-----\nabc\n".into())).unwrap();
+
+        let path = materialize_key_file(id).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "-----BEGIN KEY-----\nabc\n"
+        );
+
+        connections::delete(dir.path(), id).unwrap();
     }
 }

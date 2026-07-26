@@ -23,8 +23,14 @@ pub struct ConnectionInfo {
     /// `/var/run/docker.sock` elsewhere), or a `tcp://host:port` URL for a
     /// remote engine.
     pub endpoint: String,
-    /// Remote TLS client auth is issue #7; profiles already record intent.
+    /// When set, connect over mutual TLS: the client key PEM lives in the
+    /// keyring (see `save`'s `secret` param), `client_cert_path` and
+    /// `ca_cert_path` are plain paths to files already on disk.
     pub use_tls: bool,
+    #[serde(default)]
+    pub client_cert_path: Option<String>,
+    #[serde(default)]
+    pub ca_cert_path: Option<String>,
 }
 
 fn store_file(dir: &Path) -> PathBuf {
@@ -96,6 +102,8 @@ mod tests {
             name: format!("conn {id}"),
             endpoint: "tcp://192.168.1.105:2375".into(),
             use_tls: false,
+            client_cert_path: None,
+            ca_cert_path: None,
         }
     }
 
@@ -126,6 +134,33 @@ mod tests {
     fn unknown_connection_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         assert!(get(dir.path(), "nope").is_err());
+    }
+
+    #[test]
+    fn tls_fields_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = conn("a");
+        c.use_tls = true;
+        c.client_cert_path = Some("/certs/cert.pem".into());
+        c.ca_cert_path = Some("/certs/ca.pem".into());
+        save(dir.path(), c.clone(), None).unwrap();
+        assert_eq!(get(dir.path(), "a").unwrap(), c);
+    }
+
+    /// An existing `connections.json` written before TLS support (issue #7)
+    /// has no `clientCertPath`/`caCertPath` keys at all — it must still load,
+    /// defaulting the new fields to `None`, with no migration step.
+    #[test]
+    fn pre_tls_connections_json_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            store_file(dir.path()),
+            r#"[{"id":"a","name":"old","endpoint":"tcp://192.168.1.105:2375","useTls":false}]"#,
+        )
+        .unwrap();
+        let loaded = get(dir.path(), "a").unwrap();
+        assert_eq!(loaded.client_cert_path, None);
+        assert_eq!(loaded.ca_cert_path, None);
     }
 
     // Real OS keyring roundtrip. Ignored in CI (headless ubuntu has no Secret

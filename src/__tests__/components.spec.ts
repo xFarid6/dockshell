@@ -18,6 +18,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 import ComposePanel from "../components/ComposePanel.vue";
+import ConnectionForm from "../components/ConnectionForm.vue";
 import ConnectionList from "../components/ConnectionList.vue";
 import ContainerDetail from "../components/ContainerDetail.vue";
 import ContainerTable from "../components/ContainerTable.vue";
@@ -65,6 +66,51 @@ describe("ConnectionList", () => {
       props: { connections: [], activeId: null },
     });
     expect(w.text()).toContain("No connections yet");
+  });
+});
+
+describe("ConnectionForm", () => {
+  it("hides TLS fields until the checkbox is ticked", async () => {
+    const w = mount(ConnectionForm);
+    expect(w.findAll("input").length).toBe(3); // name, endpoint, TLS checkbox
+    await w.find("input[type='checkbox']").setValue(true);
+    expect(w.findAll("input").length).toBe(6); // + cert path, CA path, key PEM
+  });
+
+  it("emits save with cert/CA paths and the key PEM as the secret when TLS is on", async () => {
+    const w = mount(ConnectionForm);
+    const inputs = w.findAll("input");
+    await inputs[0].setValue("wyse-server");
+    await inputs[1].setValue("tcp://192.168.1.105:2376");
+    await w.find("input[type='checkbox']").setValue(true);
+    const tlsInputs = w.findAll("input");
+    await tlsInputs[3].setValue("/certs/cert.pem");
+    await tlsInputs[4].setValue("/certs/ca.pem");
+    await tlsInputs[5].setValue("-----BEGIN KEY-----");
+
+    await w.find("form").trigger("submit");
+
+    expect(w.emitted("save")).toHaveLength(1);
+    const [info, secret] = w.emitted("save")![0] as [ConnectionInfo, string | undefined];
+    expect(info.useTls).toBe(true);
+    expect(info.clientCertPath).toBe("/certs/cert.pem");
+    expect(info.caCertPath).toBe("/certs/ca.pem");
+    expect(secret).toBe("-----BEGIN KEY-----");
+  });
+
+  it("omits cert paths and secret when TLS is off", async () => {
+    const w = mount(ConnectionForm);
+    const inputs = w.findAll("input");
+    await inputs[0].setValue("local");
+    await inputs[1].setValue("local");
+
+    await w.find("form").trigger("submit");
+
+    const [info, secret] = w.emitted("save")![0] as [ConnectionInfo, string | undefined];
+    expect(info.useTls).toBe(false);
+    expect(info.clientCertPath).toBeUndefined();
+    expect(info.caCertPath).toBeUndefined();
+    expect(secret).toBeUndefined();
   });
 });
 
