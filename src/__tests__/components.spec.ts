@@ -12,18 +12,30 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => listen(...args),
 }));
 
+const open = vi.fn();
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: (...args: unknown[]) => open(...args),
+}));
+
+import ComposePanel from "../components/ComposePanel.vue";
 import ConnectionForm from "../components/ConnectionForm.vue";
 import ConnectionList from "../components/ConnectionList.vue";
 import ContainerDetail from "../components/ContainerDetail.vue";
 import ContainerTable from "../components/ContainerTable.vue";
 import CreateContainerDialog from "../components/CreateContainerDialog.vue";
 import ImageTable from "../components/ImageTable.vue";
+import NetworkTable from "../components/NetworkTable.vue";
+import SettingsDialog from "../components/SettingsDialog.vue";
 import TaskLogPanel from "../components/TaskLogPanel.vue";
+import VolumeTable from "../components/VolumeTable.vue";
 import type {
   ConnectionInfo,
   ContainerDetail as ContainerDetailInfo,
   ContainerInfo,
   ImageInfo,
+  NetworkInfo,
+  Settings,
+  VolumeInfo,
 } from "../api";
 
 const conns: ConnectionInfo[] = [
@@ -284,6 +296,97 @@ describe("ImageTable", () => {
   });
 });
 
+describe("NetworkTable (#5)", () => {
+  const networks: NetworkInfo[] = [
+    {
+      id: "n1",
+      name: "app-net",
+      driver: "bridge",
+      scope: "local",
+      subnet: "172.20.0.0/16",
+      isBuiltin: false,
+      attachments: [{ container: "portainer", ip: "172.20.0.2/16" }],
+    },
+    {
+      id: "b1",
+      name: "bridge",
+      driver: "bridge",
+      scope: "local",
+      subnet: "172.17.0.0/16",
+      isBuiltin: true,
+      attachments: [],
+    },
+  ];
+
+  it("renders network rows with their attached containers", () => {
+    const w = mount(NetworkTable, { props: { networks, busy: false } });
+    expect(w.text()).toContain("app-net");
+    expect(w.text()).toContain("172.20.0.0/16");
+    expect(w.text()).toContain("portainer");
+  });
+
+  it("shows a dash when a network has no attachments or subnet", () => {
+    const w = mount(NetworkTable, {
+      props: { networks: [networks[1]], busy: false },
+    });
+    expect(w.text()).toContain("—");
+  });
+
+  it("shows an empty state", () => {
+    const w = mount(NetworkTable, { props: { networks: [], busy: false } });
+    expect(w.text()).toContain("No networks.");
+  });
+
+  it("disables remove for a built-in network", () => {
+    const w = mount(NetworkTable, { props: { networks, busy: false } });
+    const buttons = w.findAll("td.actions button");
+    expect(buttons[0].attributes("disabled")).toBeUndefined(); // app-net
+    expect(buttons[1].attributes("disabled")).toBeDefined(); // bridge
+  });
+
+  it("emits remove with the network name", async () => {
+    const w = mount(NetworkTable, { props: { networks, busy: false } });
+    await w.findAll("td.actions button")[0].trigger("click");
+    expect(w.emitted("remove")).toEqual([["app-net"]]);
+  });
+});
+
+describe("VolumeTable", () => {
+  const volumes: VolumeInfo[] = [
+    {
+      name: "data",
+      driver: "local",
+      mountpoint: "/var/lib/docker/volumes/data/_data",
+      created: "2026-07-01T12:00:00Z",
+      labels: {},
+      usedBy: ["portainer"],
+    },
+  ];
+
+  it("renders volume rows with their used-by containers", () => {
+    const w = mount(VolumeTable, { props: { volumes, busy: false } });
+    expect(w.text()).toContain("data");
+    expect(w.text()).toContain("portainer");
+  });
+
+  it("shows a dash when a volume is unused", () => {
+    const unused = [{ ...volumes[0], usedBy: [] }];
+    const w = mount(VolumeTable, { props: { volumes: unused, busy: false } });
+    expect(w.text()).toContain("—");
+  });
+
+  it("shows an empty state", () => {
+    const w = mount(VolumeTable, { props: { volumes: [], busy: false } });
+    expect(w.text()).toContain("No volumes.");
+  });
+
+  it("emits remove with the volume name", async () => {
+    const w = mount(VolumeTable, { props: { volumes, busy: false } });
+    await w.find(".actions button").trigger("click");
+    expect(w.emitted("remove")).toEqual([["data"]]);
+  });
+});
+
 describe("CreateContainerDialog", () => {
   it("emits create with trimmed name and filtered ports/env", async () => {
     const w = mount(CreateContainerDialog, {
@@ -318,6 +421,31 @@ describe("CreateContainerDialog", () => {
     const w = mount(CreateContainerDialog, {
       props: { image: "nginx:latest", busy: false },
     });
+    await w.findAll(".actions button")[1].trigger("click");
+    expect(w.emitted("close")).toHaveLength(1);
+  });
+});
+
+describe("SettingsDialog", () => {
+  const settings: Settings = { theme: "system", refreshIntervalSecs: 10 };
+
+  it("emits save with the edited theme and interval", async () => {
+    const w = mount(SettingsDialog, { props: { settings } });
+    await w.find("select").setValue("light");
+    await w.find("input[type='number']").setValue(30);
+    await w.find(".actions button").trigger("click");
+    expect(w.emitted("save")).toEqual([[{ theme: "light", refreshIntervalSecs: 30 }]]);
+  });
+
+  it("clamps a zero/blank interval to 1 on save", async () => {
+    const w = mount(SettingsDialog, { props: { settings } });
+    await w.find("input[type='number']").setValue(0);
+    await w.find(".actions button").trigger("click");
+    expect(w.emitted("save")).toEqual([[{ theme: "system", refreshIntervalSecs: 1 }]]);
+  });
+
+  it("emits close on cancel", async () => {
+    const w = mount(SettingsDialog, { props: { settings } });
     await w.findAll(".actions button")[1].trigger("click");
     expect(w.emitted("close")).toHaveLength(1);
   });
@@ -398,6 +526,60 @@ describe("ContainerDetail", () => {
 
     await w.find("button.close").trigger("click");
     expect(w.emitted("close")).toHaveLength(1);
+  });
+});
+
+describe("ComposePanel (#6)", () => {
+  beforeEach(() => {
+    open.mockReset();
+  });
+
+  it("shows a notice and disables inputs for a non-local connection", () => {
+    const w = mount(ComposePanel, { props: { isLocal: false, busy: false } });
+    expect(w.text()).toContain("Compose requires a local connection");
+    expect(w.find("input").attributes("disabled")).toBeDefined();
+  });
+
+  it("does not emit up/down for a blank file path", async () => {
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: false } });
+    const buttons = w.findAll("button");
+    await buttons[1].trigger("click"); // Up
+    await buttons[2].trigger("click"); // Down
+    expect(w.emitted("up")).toBeUndefined();
+    expect(w.emitted("down")).toBeUndefined();
+  });
+
+  it("emits up/down with the trimmed file path", async () => {
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: false } });
+    await w.find("input").setValue("  /stacks/app.yml  ");
+    const buttons = w.findAll("button");
+    await buttons[1].trigger("click"); // Up
+    await buttons[2].trigger("click"); // Down
+    expect(w.emitted("up")).toEqual([["/stacks/app.yml"]]);
+    expect(w.emitted("down")).toEqual([["/stacks/app.yml"]]);
+  });
+
+  it("does not emit while busy, even with a file path set", async () => {
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: true } });
+    await w.find("input").setValue("/stacks/app.yml");
+    await w.findAll("button")[1].trigger("click"); // Up
+    expect(w.emitted("up")).toBeUndefined();
+  });
+
+  it("fills the file path from the browse dialog", async () => {
+    open.mockResolvedValue("/picked/compose.yml");
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: false } });
+    await w.findAll("button")[0].trigger("click"); // Browse…
+    await flushPromises();
+    expect((w.find("input").element as HTMLInputElement).value).toBe("/picked/compose.yml");
+  });
+
+  it("ignores a cancelled browse dialog", async () => {
+    open.mockResolvedValue(null);
+    const w = mount(ComposePanel, { props: { isLocal: true, busy: false } });
+    await w.findAll("button")[0].trigger("click"); // Browse…
+    await flushPromises();
+    expect((w.find("input").element as HTMLInputElement).value).toBe("");
   });
 });
 

@@ -138,6 +138,6 @@ onUnmounted(() => {
   font-size: 0.85rem;
 }
 .error {
-  color: #ff6b6b;
+  color: var(--color-error);
 }
 </style>

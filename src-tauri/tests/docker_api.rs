@@ -402,6 +402,94 @@ async fn streams_container_events_from_engine_api() {
 }
 
 #[tokio::test]
+async fn lists_volumes_and_cross_references_container_mounts() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/volumes$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Volumes": [
+                {
+                    "Name": "data",
+                    "Driver": "local",
+                    "Mountpoint": "/var/lib/docker/volumes/data/_data",
+                    "CreatedAt": "2026-07-01T12:00:00Z",
+                    "Labels": {},
+                    "Options": {},
+                    "Scope": "local"
+                },
+                {
+                    "Name": "unused",
+                    "Driver": "local",
+                    "Mountpoint": "/var/lib/docker/volumes/unused/_data",
+                    "CreatedAt": "2026-07-02T12:00:00Z",
+                    "Labels": {},
+                    "Options": {},
+                    "Scope": "local"
+                }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/containers/json$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "Id": "abc123",
+                "Names": ["/portainer"],
+                "Image": "portainer/portainer-ce:latest",
+                "State": "running",
+                "Status": "Up 3 days",
+                "Mounts": [
+                    { "Type": "volume", "Name": "data", "Source": "/var/lib/docker/volumes/data/_data" },
+                    { "Type": "bind", "Source": "/etc/hosts" }
+                ]
+            }
+        ])))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let volumes = docker::list_volumes(&client).await.unwrap();
+
+    assert_eq!(volumes.len(), 2);
+    let data = volumes.iter().find(|v| v.name == "data").unwrap();
+    assert_eq!(data.driver, "local");
+    assert_eq!(data.mountpoint, "/var/lib/docker/volumes/data/_data");
+    assert_eq!(data.used_by, vec!["portainer".to_string()]);
+    let unused = volumes.iter().find(|v| v.name == "unused").unwrap();
+    assert!(unused.used_by.is_empty());
+}
+
+#[tokio::test]
+async fn removes_a_volume_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path_regex(r"^(/v[0-9.]+)?/volumes/data$"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    docker::remove_volume(&client, "data").await.unwrap();
+}
+
+#[tokio::test]
+async fn remove_volume_surfaces_in_use_conflict() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path_regex(r"^(/v[0-9.]+)?/volumes/data$"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+            "message": "volume is in use - [abc123]"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let err = docker::remove_volume(&client, "data").await.unwrap_err();
+    assert!(err.contains("in use"));
+}
+
+#[tokio::test]
 async fn resizes_exec_tty_via_engine_api() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -483,4 +571,91 @@ async fn streams_tty_exec_output_over_the_upgraded_connection() {
 
     let chunk = output.next().await.unwrap().unwrap();
     assert_eq!(chunk, "/ # ");
+}
+
+#[tokio::test]
+async fn lists_networks_with_attachments_from_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "Id": "b1",
+                "Name": "bridge",
+                "Driver": "bridge",
+                "Scope": "local",
+                "IPAM": { "Config": [{ "Subnet": "172.17.0.0/16" }] }
+            },
+            {
+                "Id": "n1",
+                "Name": "app-net",
+                "Driver": "bridge",
+                "Scope": "local",
+                "IPAM": { "Config": [{ "Subnet": "172.20.0.0/16" }] }
+            }
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks/bridge$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": "b1",
+            "Name": "bridge",
+            "Driver": "bridge",
+            "Scope": "local",
+            "Containers": {}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks/app-net$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": "n1",
+            "Name": "app-net",
+            "Driver": "bridge",
+            "Scope": "local",
+            "Containers": {
+                "abc123": { "Name": "portainer", "IPv4Address": "172.20.0.2/16" }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let networks = docker::list_networks(&client).await.unwrap();
+
+    assert_eq!(networks.len(), 2);
+    let bridge = networks.iter().find(|n| n.name == "bridge").unwrap();
+    assert!(bridge.is_builtin);
+    assert!(bridge.attachments.is_empty());
+    let app_net = networks.iter().find(|n| n.name == "app-net").unwrap();
+    assert!(!app_net.is_builtin);
+    assert_eq!(app_net.subnet, "172.20.0.0/16");
+    assert_eq!(app_net.attachments.len(), 1);
+    assert_eq!(app_net.attachments[0].container, "portainer");
+    assert_eq!(app_net.attachments[0].ip, "172.20.0.2/16");
+}
+
+#[tokio::test]
+async fn removes_a_network_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks/app-net$"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    docker::remove_network(&client, "app-net").await.unwrap();
+}
+
+#[tokio::test]
+async fn remove_network_rejects_a_builtin_network_without_calling_the_engine() {
+    // No mocks registered — a call reaching the (mock) server would 404 and
+    // this would fail, proving the built-in guard runs before any request.
+    let server = MockServer::start().await;
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+
+    let err = docker::remove_network(&client, "bridge").await.unwrap_err();
+    assert!(err.contains("bridge"));
 }
