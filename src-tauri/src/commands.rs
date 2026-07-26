@@ -7,13 +7,16 @@ use std::sync::{Arc, Mutex};
 use bollard::Docker;
 use futures_util::StreamExt;
 use tauri::{async_runtime::JoinHandle, Emitter, Manager};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::compose;
 use crate::connections::{self, ConnectionInfo};
 use crate::docker::{
     self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, NetworkInfo, PortMapping,
+    VolumeInfo,
 };
+use crate::settings::{self, Settings};
 
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -156,6 +159,105 @@ pub async fn remove_network(
     let info = connections::get(&store_dir(&app)?, &connection_id)?;
     let client = docker::client_for(&info)?;
     docker::remove_network(&client, &name).await
+}
+
+/// Forward `docker compose`'s stdout/stderr to the frontend as `compose-output`
+/// events while the command is in flight, then resolve once the process
+/// exits (erroring on a non-zero exit status).
+async fn run_compose(
+    app: &tauri::AppHandle,
+    connection_id: &str,
+    file: &str,
+    args: &[&str],
+) -> Result<(), String> {
+    let info = connections::get(&store_dir(app)?, connection_id)?;
+    compose::ensure_local(&info)?;
+
+    let mut child = compose::spawn_compose(file, args)?;
+    let stdout = child.stdout.take().expect("stdout piped at spawn");
+    let stderr = child.stderr.take().expect("stderr piped at spawn");
+
+    let app1 = app.clone();
+    let stdout_task = tauri::async_runtime::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(message)) = lines.next_line().await {
+            let _ = app1.emit(
+                "compose-output",
+                compose::ComposeLine {
+                    stream: "stdout".to_string(),
+                    message,
+                },
+            );
+        }
+    });
+    let app2 = app.clone();
+    let stderr_task = tauri::async_runtime::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(message)) = lines.next_line().await {
+            let _ = app2.emit(
+                "compose-output",
+                compose::ComposeLine {
+                    stream: "stderr".to_string(),
+                    message,
+                },
+            );
+        }
+    });
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
+
+    compose_result(status)
+}
+
+fn compose_result(status: std::process::ExitStatus) -> Result<(), String> {
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("docker compose exited with status {status}"))
+    }
+}
+
+/// Run `docker compose -f <file> up -d` for the local connection.
+#[tauri::command]
+pub async fn compose_up(
+    app: tauri::AppHandle,
+    connection_id: String,
+    file: String,
+) -> Result<(), String> {
+    run_compose(&app, &connection_id, &file, &["up", "-d"]).await
+}
+
+/// Run `docker compose -f <file> down` for the local connection.
+#[tauri::command]
+pub async fn compose_down(
+    app: tauri::AppHandle,
+    connection_id: String,
+    file: String,
+) -> Result<(), String> {
+    run_compose(&app, &connection_id, &file, &["down"]).await
+}
+
+#[tauri::command]
+pub async fn list_volumes(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<VolumeInfo>, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::list_volumes(&client).await
+}
+
+#[tauri::command]
+pub async fn remove_volume(
+    app: tauri::AppHandle,
+    connection_id: String,
+    name: String,
+) -> Result<(), String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::remove_volume(&client, &name).await
 }
 
 /// Tracks the in-flight log-follow task per container so a new "Logs" click
@@ -370,9 +472,43 @@ pub fn stop_exec(state: tauri::State<'_, ExecSessions>, exec_id: String) -> Resu
     Ok(())
 }
 
+#[tauri::command]
+pub fn get_settings(app: tauri::AppHandle) -> Result<Settings, String> {
+    settings::load(&store_dir(&app)?)
+}
+
+#[tauri::command]
+pub fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
+    settings::save(&store_dir(&app)?, &settings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exit_status(code: i32) -> std::process::ExitStatus {
+        if cfg!(windows) {
+            std::process::Command::new("cmd")
+                .args(["/C", "exit", &code.to_string()])
+                .status()
+        } else {
+            std::process::Command::new("sh")
+                .args(["-c", &format!("exit {code}")])
+                .status()
+        }
+        .expect("spawn a trivial process")
+    }
+
+    #[test]
+    fn compose_result_ok_on_success_status() {
+        assert_eq!(compose_result(exit_status(0)), Ok(()));
+    }
+
+    #[test]
+    fn compose_result_err_on_nonzero_status() {
+        let err = compose_result(exit_status(3)).unwrap_err();
+        assert!(err.contains("docker compose exited with status"));
+    }
 
     /// Stopping a container that never had a stream (or was already
     /// stopped) must be a no-op, not a panic — the frontend calls

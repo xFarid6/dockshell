@@ -91,6 +91,21 @@ export interface NetworkInfo {
   attachments: NetworkAttachment[];
 }
 
+export interface Settings {
+  /** "dark" | "light" | "system". */
+  theme: "dark" | "light" | "system";
+  refreshIntervalSecs: number;
+}
+
+export interface VolumeInfo {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  created: string;
+  labels: Record<string, string>;
+  usedBy: string[];
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -160,6 +175,12 @@ export const listNetworks = (connectionId: string) =>
 export const removeNetwork = (connectionId: string, name: string) =>
   invoke<void>("remove_network", { connectionId, name });
 
+export const listVolumes = (connectionId: string) =>
+  invoke<VolumeInfo[]>("list_volumes", { connectionId });
+
+export const removeVolume = (connectionId: string, name: string) =>
+  invoke<void>("remove_volume", { connectionId, name });
+
 export type ExecShell = "/bin/sh" | "/bin/bash";
 
 /** Returns the exec ID: output arrives as `exec-output:{execId}` events. */
@@ -177,3 +198,21 @@ export const resizeExec = (execId: string, cols: number, rows: number) =>
 
 export const stopExec = (execId: string) =>
   invoke<void>("stop_exec", { execId });
+
+export interface ComposeLine {
+  stream: string;
+  message: string;
+}
+
+/** Runs `docker compose -f file up -d`; only works for the local connection. Output arrives as `compose-output` events. */
+export const composeUp = (connectionId: string, file: string) =>
+  invoke<void>("compose_up", { connectionId, file });
+
+/** Runs `docker compose -f file down`; only works for the local connection. Output arrives as `compose-output` events. */
+export const composeDown = (connectionId: string, file: string) =>
+  invoke<void>("compose_down", { connectionId, file });
+
+export const getSettings = () => invoke<Settings>("get_settings");
+
+export const saveSettings = (settings: Settings) =>
+  invoke<void>("save_settings", { settings });

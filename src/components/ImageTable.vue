@@ -102,7 +102,7 @@ th,
 td {
   text-align: left;
   padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  border-bottom: 1px solid var(--color-border);
 }
 .pull-form {
   display: flex;

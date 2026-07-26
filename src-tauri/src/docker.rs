@@ -6,12 +6,14 @@ use std::pin::Pin;
 
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use bollard::models::MountPointTypeEnum;
 use bollard::models::{ContainerCreateBody, HostConfig, PortBinding as ModelPortBinding};
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, EventsOptionsBuilder,
     InspectContainerOptions, InspectNetworkOptionsBuilder, ListContainersOptionsBuilder,
-    ListImagesOptionsBuilder, ListNetworksOptionsBuilder, LogsOptionsBuilder,
-    RemoveImageOptionsBuilder, ResizeExecOptionsBuilder, RestartContainerOptions,
+    ListImagesOptionsBuilder, ListNetworksOptionsBuilder, ListVolumesOptionsBuilder,
+    LogsOptionsBuilder, RemoveImageOptionsBuilder, RemoveVolumeOptionsBuilder,
+    ResizeExecOptionsBuilder, RestartContainerOptions,
     StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
@@ -482,6 +484,78 @@ pub async fn start_exec(
         }
         StartExecResults::Detached => Err("exec started detached unexpectedly".to_string()),
     }
+}
+
+/// What the frontend renders per volume row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeInfo {
+    pub name: String,
+    pub driver: String,
+    pub mountpoint: String,
+    pub created: String,
+    pub labels: HashMap<String, String>,
+    /// Names of containers with a volume mount pointing at this volume.
+    pub used_by: Vec<String>,
+}
+
+/// List volumes, cross-referencing every container's mounts so the UI can
+/// show which containers are using each volume without extra requests.
+pub async fn list_volumes(docker: &Docker) -> Result<Vec<VolumeInfo>, String> {
+    let opts = ListVolumesOptionsBuilder::new().build();
+    let volumes = docker
+        .list_volumes(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?
+        .volumes
+        .unwrap_or_default();
+
+    let containers = docker
+        .list_containers(Some(ListContainersOptionsBuilder::new().all(true).build()))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut used_by: HashMap<String, Vec<String>> = HashMap::new();
+    for c in &containers {
+        let name = c
+            .names
+            .as_ref()
+            .and_then(|n| n.first())
+            .map(|n| n.trim_start_matches('/').to_string())
+            .unwrap_or_default();
+        for m in c.mounts.as_deref().unwrap_or_default() {
+            if m.typ == Some(MountPointTypeEnum::VOLUME) {
+                if let Some(volume_name) = &m.name {
+                    used_by
+                        .entry(volume_name.clone())
+                        .or_default()
+                        .push(name.clone());
+                }
+            }
+        }
+    }
+
+    Ok(volumes
+        .into_iter()
+        .map(|v| VolumeInfo {
+            used_by: used_by.remove(&v.name).unwrap_or_default(),
+            name: v.name,
+            driver: v.driver,
+            mountpoint: v.mountpoint,
+            created: v.created_at.map(|d| d.to_string()).unwrap_or_default(),
+            labels: v.labels,
+        })
+        .collect())
+}
+
+/// Remove a volume by name. Fails cleanly (with the engine's message, e.g.
+/// "volume is in use") when containers still reference it.
+pub async fn remove_volume(docker: &Docker, name: &str) -> Result<(), String> {
+    let opts = RemoveVolumeOptionsBuilder::new().build();
+    docker
+        .remove_volume(name, Some(opts))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Resize the TTY of a running exec session (in character cells).
