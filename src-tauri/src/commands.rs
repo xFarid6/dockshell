@@ -431,16 +431,16 @@ mod tests {
     use super::*;
 
     fn exit_status(code: i32) -> std::process::ExitStatus {
-        let (program, args): (&str, &[&str]) = if cfg!(windows) {
-            ("cmd", &["/C", "exit"])
+        if cfg!(windows) {
+            std::process::Command::new("cmd")
+                .args(["/C", "exit", &code.to_string()])
+                .status()
         } else {
-            ("sh", &["-c", "exit"])
-        };
-        std::process::Command::new(program)
-            .args(args)
-            .arg(code.to_string())
-            .status()
-            .expect("spawn a trivial process")
+            std::process::Command::new("sh")
+                .args(["-c", &format!("exit {code}")])
+                .status()
+        }
+        .expect("spawn a trivial process")
     }
 
     #[test]
