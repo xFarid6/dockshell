@@ -85,6 +85,14 @@ export interface PruneResult {
   spaceReclaimed: number | null;
 }
 
+export type HealthStatus = "connecting" | "connected" | "unreachable";
+
+export interface HealthEvent {
+  connectionId: string;
+  status: HealthStatus;
+  error: string | null;
+}
+
 export interface NetworkAttachment {
   container: string;
   ip: string;
@@ -219,6 +227,12 @@ export const pruneVolumes = (connectionId: string) =>
 
 export const pruneNetworks = (connectionId: string) =>
   invoke<PruneResult>("prune_networks", { connectionId });
+
+/** (Re)starts health polling for every saved connection; updates arrive as `connection-health` events. */
+export const refreshHealthMonitors = () =>
+  invoke<void>("refresh_health_monitors");
+
+export const stopHealthMonitors = () => invoke<void>("stop_health_monitors");
 
 export interface ComposeLine {
   stream: string;

@@ -20,6 +20,7 @@ import {
   pruneNetworks,
   pruneVolumes,
   pullImage,
+  refreshHealthMonitors,
   removeImage,
   removeNetwork,
   removeVolume,
@@ -31,6 +32,7 @@ import {
   startLogStream,
   stopEventStream,
   stopExec,
+  stopHealthMonitors,
   stopLogStream,
   writeExecInput,
 } from "../api";
@@ -233,6 +235,16 @@ describe("api wrappers", () => {
     invoke.mockResolvedValue({ deleted: [], spaceReclaimed: null });
     await pruneNetworks("c1");
     expect(invoke).toHaveBeenCalledWith("prune_networks", { connectionId: "c1" });
+  });
+
+  it("refresh_health_monitors takes no args", async () => {
+    await refreshHealthMonitors();
+    expect(invoke).toHaveBeenCalledWith("refresh_health_monitors");
+  });
+
+  it("stop_health_monitors takes no args", async () => {
+    await stopHealthMonitors();
+    expect(invoke).toHaveBeenCalledWith("stop_health_monitors");
   });
 
   it("get_settings takes no args", async () => {

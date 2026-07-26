@@ -94,6 +94,17 @@ pub async fn ping(docker: &Docker) -> Result<String, String> {
     ))
 }
 
+/// A connection's reachability, pushed to the frontend as it changes so
+/// `ConnectionList.vue` can show a status dot per profile without polling.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthEvent {
+    pub connection_id: String,
+    /// "connecting" | "connected" | "unreachable".
+    pub status: String,
+    pub error: Option<String>,
+}
+
 pub async fn list_containers(docker: &Docker) -> Result<Vec<ContainerInfo>, String> {
     let opts = ListContainersOptionsBuilder::new().all(true).build();
     let summaries = docker

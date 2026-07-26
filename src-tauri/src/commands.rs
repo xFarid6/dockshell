@@ -13,8 +13,8 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::compose;
 use crate::connections::{self, ConnectionInfo};
 use crate::docker::{
-    self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, NetworkInfo, PortMapping,
-    PruneResult, VolumeInfo,
+    self, ContainerDetail, ContainerInfo, ExecInput, HealthEvent, ImageInfo, NetworkInfo,
+    PortMapping, PruneResult, VolumeInfo,
 };
 use crate::settings::{self, Settings};
 
@@ -406,6 +406,96 @@ pub fn stop_event_stream(
     Ok(())
 }
 
+/// Steady-state polling interval once a connection is reachable. The interval
+/// can later come from the settings surface (issue #13); hardcoded for now.
+const HEALTH_POLL_SECS: u64 = 10;
+/// Reconnect backoff after a failed ping, doubling from 1s up to this cap.
+const HEALTH_MAX_BACKOFF_SECS: u64 = 60;
+
+/// Tracks the per-connection health-polling task so re-running discovery
+/// (on connection add/remove) cancels stale monitors instead of leaking them.
+#[derive(Default)]
+pub struct HealthMonitors(Mutex<HashMap<String, JoinHandle<()>>>);
+
+fn abort_all_health_monitors(monitors: &HealthMonitors) {
+    let mut monitors = monitors.0.lock().unwrap();
+    for handle in monitors.values() {
+        handle.abort();
+    }
+    monitors.clear();
+}
+
+/// (Re)start health monitoring for every saved connection: pings each on a
+/// loop, emitting `connection-health` events (connecting/connected/unreachable
+/// with the last error) so `ConnectionList.vue` can show a status dot per
+/// profile. Cancels any monitors already running first, so this is safe to
+/// call again after a connection is added or removed.
+#[tauri::command]
+pub fn refresh_health_monitors(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, HealthMonitors>,
+) -> Result<(), String> {
+    let conns = connections::load(&store_dir(&app)?)?;
+
+    abort_all_health_monitors(&state);
+
+    for info in conns {
+        let connection_id = info.id.clone();
+        let app_handle = app.clone();
+        let handle = tauri::async_runtime::spawn(async move {
+            let mut backoff_secs = 1u64;
+            loop {
+                let result = match docker::client_for(&info) {
+                    Ok(client) => docker::ping(&client).await.map(|_| ()),
+                    Err(e) => Err(e),
+                };
+                match result {
+                    Ok(()) => {
+                        backoff_secs = 1;
+                        let _ = app_handle.emit(
+                            "connection-health",
+                            HealthEvent {
+                                connection_id: info.id.clone(),
+                                status: "connected".to_string(),
+                                error: None,
+                            },
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(HEALTH_POLL_SECS)).await;
+                    }
+                    Err(e) => {
+                        let _ = app_handle.emit(
+                            "connection-health",
+                            HealthEvent {
+                                connection_id: info.id.clone(),
+                                status: "unreachable".to_string(),
+                                error: Some(e),
+                            },
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(HEALTH_MAX_BACKOFF_SECS);
+                        let _ = app_handle.emit(
+                            "connection-health",
+                            HealthEvent {
+                                connection_id: info.id.clone(),
+                                status: "connecting".to_string(),
+                                error: None,
+                            },
+                        );
+                    }
+                }
+            }
+        });
+        state.0.lock().unwrap().insert(connection_id, handle);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_health_monitors(state: tauri::State<'_, HealthMonitors>) -> Result<(), String> {
+    abort_all_health_monitors(&state);
+    Ok(())
+}
+
 /// A running exec session: the engine client (for resize) and the stdin
 /// writer (for keystrokes), plus the output-forwarding task so closing the
 /// terminal tab can cancel it.
@@ -637,5 +727,32 @@ mod tests {
 
         // Second call: entry already gone, must not panic.
         cancel_exec_session(&sessions, "e1");
+    }
+
+    /// Same idempotency guarantee as the other cancel helpers: refreshing
+    /// monitors with zero saved connections (or a repeat stop call) must not
+    /// panic on an empty map.
+    #[test]
+    fn abort_all_health_monitors_on_empty_set_is_a_noop() {
+        let monitors = HealthMonitors::default();
+        abort_all_health_monitors(&monitors);
+        abort_all_health_monitors(&monitors); // still a no-op
+    }
+
+    #[tokio::test]
+    async fn abort_all_health_monitors_stops_every_running_task() {
+        let monitors = HealthMonitors::default();
+        for id in ["a", "b"] {
+            let handle = tauri::async_runtime::spawn(async {
+                std::future::pending::<()>().await;
+            });
+            monitors.0.lock().unwrap().insert(id.to_string(), handle);
+        }
+
+        abort_all_health_monitors(&monitors);
+        assert!(monitors.0.lock().unwrap().is_empty());
+
+        // Second call: map already empty, must not panic.
+        abort_all_health_monitors(&monitors);
     }
 }

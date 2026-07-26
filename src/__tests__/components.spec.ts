@@ -68,6 +68,29 @@ describe("ConnectionList", () => {
     });
     expect(w.text()).toContain("No connections yet");
   });
+
+  it("renders an unknown-status dot when no health event has arrived yet", () => {
+    const w = mount(ConnectionList, {
+      props: { connections: conns, activeId: null },
+    });
+    const dots = w.findAll(".health-dot");
+    expect(dots[0].classes()).toContain("unknown");
+  });
+
+  it("renders the status dot and its title from the health map", () => {
+    const w = mount(ConnectionList, {
+      props: {
+        connections: conns,
+        activeId: null,
+        health: {
+          "1": { connectionId: "1", status: "unreachable", error: "connection refused" },
+        },
+      },
+    });
+    const dot = w.findAll(".health-dot")[0];
+    expect(dot.classes()).toContain("unreachable");
+    expect(dot.attributes("title")).toBe("Unreachable: connection refused");
+  });
 });
 
 describe("ConnectionForm", () => {
