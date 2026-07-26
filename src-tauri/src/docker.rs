@@ -2,23 +2,45 @@
 //! expose the few operations the scaffold needs (list, start/stop/restart).
 
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use bollard::models::MountPointTypeEnum;
 use bollard::models::{ContainerCreateBody, HostConfig, PortBinding as ModelPortBinding};
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, EventsOptionsBuilder,
-    InspectContainerOptions, ListContainersOptionsBuilder, ListImagesOptionsBuilder,
-    LogsOptionsBuilder, RemoveImageOptionsBuilder, ResizeExecOptionsBuilder,
-    RestartContainerOptions, StartContainerOptions, StopContainerOptions,
+    InspectContainerOptions, InspectNetworkOptionsBuilder, ListContainersOptionsBuilder,
+    ListImagesOptionsBuilder, ListNetworksOptionsBuilder, ListVolumesOptionsBuilder,
+    LogsOptionsBuilder, RemoveImageOptionsBuilder, RemoveVolumeOptionsBuilder,
+    ResizeExecOptionsBuilder, RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
 use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 
-use crate::connections::ConnectionInfo;
+use crate::connections::{self, ConnectionInfo};
+
+/// The client key PEM lives in the keyring, but bollard's TLS client-cert
+/// resolver reads it from a file path on every handshake (`pool_max_idle_per_host(0)`
+/// means that can be more than once per connection) — so we materialize it
+/// to a private per-connection file each time we connect.
+// ponytail: decrypted key cached on disk under the OS user profile rather
+// than held only in memory; acceptable for v1 (no weaker than the ~/.docker
+// convention Docker's own CLI uses) — revisit if bollard grows an in-memory
+// client-cert resolver.
+fn materialize_key_file(connection_id: &str) -> Result<PathBuf, String> {
+    let key_pem = connections::get_secret(connection_id)
+        .map_err(|e| format!("no client key stored for this connection: {e}"))?;
+    let dir = std::env::temp_dir().join("dockshell-tls");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{connection_id}.pem"));
+    fs::write(&path, key_pem).map_err(|e| e.to_string())?;
+    Ok(path)
+}
 
 /// What the frontend renders per container row.
 #[derive(Debug, Clone, Serialize)]
@@ -34,12 +56,31 @@ pub struct ContainerInfo {
 
 pub fn client_for(info: &ConnectionInfo) -> Result<Docker, String> {
     if info.endpoint == "local" {
-        Docker::connect_with_local_defaults().map_err(|e| e.to_string())
-    } else {
-        // tcp:// and http:// both accepted. TLS client certs are issue #7.
-        Docker::connect_with_http(&info.endpoint, 10, bollard::API_DEFAULT_VERSION)
-            .map_err(|e| e.to_string())
+        return Docker::connect_with_local_defaults().map_err(|e| e.to_string());
     }
+    if info.use_tls {
+        let cert_path = info
+            .client_cert_path
+            .as_deref()
+            .ok_or("TLS is enabled but no client certificate path is set")?;
+        let ca_path = info
+            .ca_cert_path
+            .as_deref()
+            .ok_or("TLS is enabled but no CA certificate path is set")?;
+        let key_path = materialize_key_file(&info.id)?;
+        return Docker::connect_with_ssl(
+            &info.endpoint,
+            &key_path,
+            Path::new(cert_path),
+            Path::new(ca_path),
+            10,
+            bollard::API_DEFAULT_VERSION,
+        )
+        .map_err(|e| e.to_string());
+    }
+    // tcp:// and http:// both accepted.
+    Docker::connect_with_http(&info.endpoint, 10, bollard::API_DEFAULT_VERSION)
+        .map_err(|e| e.to_string())
 }
 
 pub async fn ping(docker: &Docker) -> Result<String, String> {
@@ -494,6 +535,78 @@ pub async fn start_exec(
     }
 }
 
+/// What the frontend renders per volume row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeInfo {
+    pub name: String,
+    pub driver: String,
+    pub mountpoint: String,
+    pub created: String,
+    pub labels: HashMap<String, String>,
+    /// Names of containers with a volume mount pointing at this volume.
+    pub used_by: Vec<String>,
+}
+
+/// List volumes, cross-referencing every container's mounts so the UI can
+/// show which containers are using each volume without extra requests.
+pub async fn list_volumes(docker: &Docker) -> Result<Vec<VolumeInfo>, String> {
+    let opts = ListVolumesOptionsBuilder::new().build();
+    let volumes = docker
+        .list_volumes(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?
+        .volumes
+        .unwrap_or_default();
+
+    let containers = docker
+        .list_containers(Some(ListContainersOptionsBuilder::new().all(true).build()))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut used_by: HashMap<String, Vec<String>> = HashMap::new();
+    for c in &containers {
+        let name = c
+            .names
+            .as_ref()
+            .and_then(|n| n.first())
+            .map(|n| n.trim_start_matches('/').to_string())
+            .unwrap_or_default();
+        for m in c.mounts.as_deref().unwrap_or_default() {
+            if m.typ == Some(MountPointTypeEnum::VOLUME) {
+                if let Some(volume_name) = &m.name {
+                    used_by
+                        .entry(volume_name.clone())
+                        .or_default()
+                        .push(name.clone());
+                }
+            }
+        }
+    }
+
+    Ok(volumes
+        .into_iter()
+        .map(|v| VolumeInfo {
+            used_by: used_by.remove(&v.name).unwrap_or_default(),
+            name: v.name,
+            driver: v.driver,
+            mountpoint: v.mountpoint,
+            created: v.created_at.map(|d| d.to_string()).unwrap_or_default(),
+            labels: v.labels,
+        })
+        .collect())
+}
+
+/// Remove a volume by name. Fails cleanly (with the engine's message, e.g.
+/// "volume is in use") when containers still reference it.
+pub async fn remove_volume(docker: &Docker, name: &str) -> Result<(), String> {
+    let opts = RemoveVolumeOptionsBuilder::new().build();
+    docker
+        .remove_volume(name, Some(opts))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Resize the TTY of a running exec session (in character cells).
 pub async fn resize_exec(
     docker: &Docker,
@@ -509,4 +622,158 @@ pub async fn resize_exec(
         .resize_exec(exec_id, opts)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Networks Docker creates on every engine; not user-removable.
+fn is_builtin_network(name: &str) -> bool {
+    matches!(name, "bridge" | "host" | "none")
+}
+
+/// A container attached to a network, from the network's `Containers` map.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkAttachment {
+    pub container: String,
+    pub ip: String,
+}
+
+/// What the frontend renders per network row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkInfo {
+    pub id: String,
+    pub name: String,
+    pub driver: String,
+    pub scope: String,
+    pub subnet: String,
+    pub is_builtin: bool,
+    pub attachments: Vec<NetworkAttachment>,
+}
+
+/// List networks, inspecting each one to pull its `Containers` map — the
+/// list endpoint alone doesn't report attachments.
+pub async fn list_networks(docker: &Docker) -> Result<Vec<NetworkInfo>, String> {
+    let opts = ListNetworksOptionsBuilder::new().build();
+    let networks = docker
+        .list_networks(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::with_capacity(networks.len());
+    for n in networks {
+        let name = n.name.unwrap_or_default();
+        let detail = docker
+            .inspect_network(&name, Some(InspectNetworkOptionsBuilder::new().build()))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let attachments = detail
+            .containers
+            .unwrap_or_default()
+            .into_values()
+            .map(|c| NetworkAttachment {
+                container: c.name.unwrap_or_default(),
+                ip: c.ipv4_address.unwrap_or_default(),
+            })
+            .collect();
+
+        let subnet = n
+            .ipam
+            .as_ref()
+            .and_then(|i| i.config.as_ref())
+            .and_then(|c| c.first())
+            .and_then(|c| c.subnet.clone())
+            .unwrap_or_default();
+
+        out.push(NetworkInfo {
+            id: n.id.unwrap_or_default(),
+            is_builtin: is_builtin_network(&name),
+            name,
+            driver: n.driver.unwrap_or_default(),
+            scope: n.scope.unwrap_or_default(),
+            subnet,
+            attachments,
+        });
+    }
+    Ok(out)
+}
+
+/// Refuse to remove the built-in `bridge`/`host`/`none` networks — the
+/// engine allows it but it breaks every container relying on them.
+fn ensure_removable(name: &str) -> Result<(), String> {
+    if is_builtin_network(name) {
+        return Err(format!("cannot remove the built-in \"{name}\" network"));
+    }
+    Ok(())
+}
+
+pub async fn remove_network(docker: &Docker, name: &str) -> Result<(), String> {
+    ensure_removable(name)?;
+    docker.remove_network(name).await.map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_removing_a_builtin_network() {
+        for name in ["bridge", "host", "none"] {
+            let err = ensure_removable(name).unwrap_err();
+            assert!(err.contains(name));
+        }
+    }
+
+    #[test]
+    fn accepts_removing_a_user_network() {
+        assert!(ensure_removable("my-net").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod tls_tests {
+    use super::*;
+
+    fn tls_conn(cert: Option<&str>, ca: Option<&str>) -> ConnectionInfo {
+        ConnectionInfo {
+            id: "docker-rs-tls-test".into(),
+            name: "remote".into(),
+            endpoint: "tcp://192.168.1.105:2376".into(),
+            use_tls: true,
+            client_cert_path: cert.map(String::from),
+            ca_cert_path: ca.map(String::from),
+        }
+    }
+
+    #[test]
+    fn requires_a_client_cert_path() {
+        let err = client_for(&tls_conn(None, Some("/ca.pem"))).unwrap_err();
+        assert!(err.contains("client certificate path"));
+    }
+
+    #[test]
+    fn requires_a_ca_cert_path() {
+        let err = client_for(&tls_conn(Some("/cert.pem"), None)).unwrap_err();
+        assert!(err.contains("CA certificate path"));
+    }
+
+    // Exercises the real OS keyring (via connections::get_secret), same as
+    // connections::tests::keyring_secret_roundtrip; run locally with --ignored.
+    #[test]
+    #[ignore = "requires a real OS keyring; run locally with --ignored"]
+    fn materializes_the_key_from_the_keyring() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "dockshell-test-tls-key";
+        let mut conn = tls_conn(Some("/cert.pem"), Some("/ca.pem"));
+        conn.id = id.into();
+        connections::save(dir.path(), conn, Some("-----BEGIN KEY-----\nabc\n".into())).unwrap();
+
+        let path = materialize_key_file(id).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "-----BEGIN KEY-----\nabc\n"
+        );
+
+        connections::delete(dir.path(), id).unwrap();
+    }
 }

@@ -1,27 +1,40 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
+  composeDown,
+  composeUp,
   containerAction,
   createContainer,
   deleteConnection,
+  getSettings,
   listConnections,
   listContainers,
   listImages,
+  listNetworks,
+  listVolumes,
   pullImage,
   refreshHealthMonitors,
   removeImage,
+  removeNetwork,
+  removeVolume,
   saveConnection,
   stopHealthMonitors,
+  saveSettings,
   testConnection,
+  type ComposeLine,
   type ConnectionInfo,
   type ContainerAction,
   type ContainerInfo,
   type HealthEvent,
   type ImageInfo,
+  type NetworkInfo,
   type PortMapping,
   type PullProgress,
+  type Settings,
+  type VolumeInfo,
 } from "./api";
+import ComposePanel from "./components/ComposePanel.vue";
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
 import ContainerDetail from "./components/ContainerDetail.vue";
@@ -29,18 +42,63 @@ import ContainerTable from "./components/ContainerTable.vue";
 import CreateContainerDialog from "./components/CreateContainerDialog.vue";
 import ExecTerminal from "./components/ExecTerminal.vue";
 import ImageTable from "./components/ImageTable.vue";
+import NetworkTable from "./components/NetworkTable.vue";
+import SettingsDialog from "./components/SettingsDialog.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
+import VolumeTable from "./components/VolumeTable.vue";
+
+function applyTheme(theme: Settings["theme"]) {
+  const effective =
+    theme === "system"
+      ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+      : theme;
+  document.documentElement.setAttribute("data-theme", effective);
+}
+
+const settings = ref<Settings>({ theme: "system", refreshIntervalSecs: 10 });
+const settingsOpen = ref(false);
+let systemThemeQuery: MediaQueryList | null = null;
+
+async function refreshSettings() {
+  settings.value = await getSettings();
+  applyTheme(settings.value.theme);
+  systemThemeQuery?.removeEventListener("change", onSystemThemeChange);
+  systemThemeQuery = null;
+  if (settings.value.theme === "system") {
+    systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    systemThemeQuery.addEventListener("change", onSystemThemeChange);
+  }
+}
+
+function onSystemThemeChange() {
+  applyTheme(settings.value.theme);
+}
+
+async function onSaveSettings(next: Settings) {
+  await saveSettings(next);
+  await refreshSettings();
+  settingsOpen.value = false;
+  logTask("settings saved");
+}
 
 const health = ref<Record<string, HealthEvent>>({});
 let healthUnlisten: UnlistenFn | null = null;
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
-const view = ref<"containers" | "images">("containers");
+const view = ref<"containers" | "images" | "networks" | "volumes" | "compose">("containers");
+const composeBusy = ref(false);
+const isLocalConnection = computed(
+  () => connections.value.find((c) => c.id === activeId.value)?.endpoint === "local",
+);
 const containers = ref<ContainerInfo[]>([]);
 const images = ref<ImageInfo[]>([]);
+const networks = ref<NetworkInfo[]>([]);
+const volumes = ref<VolumeInfo[]>([]);
 const busy = ref(false);
 const imagesBusy = ref(false);
+const networksBusy = ref(false);
+const volumesBusy = ref(false);
 const error = ref("");
 const taskLog = ref<string[]>([]);
 const logsContainerId = ref<string | null>(null);
@@ -84,6 +142,34 @@ async function refreshImages() {
   }
 }
 
+async function refreshNetworks() {
+  if (!activeId.value) return;
+  networksBusy.value = true;
+  error.value = "";
+  try {
+    networks.value = await listNetworks(activeId.value);
+  } catch (e) {
+    error.value = String(e);
+    networks.value = [];
+  } finally {
+    networksBusy.value = false;
+  }
+}
+
+async function refreshVolumes() {
+  if (!activeId.value) return;
+  volumesBusy.value = true;
+  error.value = "";
+  try {
+    volumes.value = await listVolumes(activeId.value);
+  } catch (e) {
+    error.value = String(e);
+    volumes.value = [];
+  } finally {
+    volumesBusy.value = false;
+  }
+}
+
 async function onSelect(id: string) {
   activeId.value = id;
   logsContainerId.value = null;
@@ -91,11 +177,43 @@ async function onSelect(id: string) {
   detailContainerId.value = null;
   await refreshContainers();
   if (view.value === "images") await refreshImages();
+  if (view.value === "networks") await refreshNetworks();
+  if (view.value === "volumes") await refreshVolumes();
 }
 
-async function onSwitchView(next: "containers" | "images") {
+async function onSwitchView(next: "containers" | "images" | "networks" | "volumes" | "compose") {
   view.value = next;
   if (next === "images") await refreshImages();
+  if (next === "networks") await refreshNetworks();
+  if (next === "volumes") await refreshVolumes();
+}
+
+async function onRemoveNetwork(name: string) {
+  if (!activeId.value) return;
+  networksBusy.value = true;
+  try {
+    await removeNetwork(activeId.value, name);
+    logTask(`remove network ${name} — ok`);
+  } catch (e) {
+    logTask(`remove network ${name} — failed: ${e}`);
+  } finally {
+    networksBusy.value = false;
+  }
+  await refreshNetworks();
+}
+
+async function onRemoveVolume(name: string) {
+  if (!activeId.value) return;
+  volumesBusy.value = true;
+  try {
+    await removeVolume(activeId.value, name);
+    logTask(`remove volume ${name} — ok`);
+  } catch (e) {
+    logTask(`remove volume ${name} — failed: ${e}`);
+  } finally {
+    volumesBusy.value = false;
+  }
+  await refreshVolumes();
 }
 
 function onLogs(containerId: string) {
@@ -203,8 +321,41 @@ async function onRemoveImage(image: string) {
   await refreshImages();
 }
 
+async function runCompose(
+  action: "up" | "down",
+  file: string,
+  run: (connectionId: string, file: string) => Promise<void>,
+) {
+  if (!activeId.value) return;
+  const connectionId = activeId.value;
+  composeBusy.value = true;
+  logTask(`compose ${action} ${file} — starting`);
+  const unlisten = await listen<ComposeLine>("compose-output", (event) => {
+    logTask(`compose ${action} — ${event.payload.message}`);
+  });
+  try {
+    await run(connectionId, file);
+    logTask(`compose ${action} ${file} — done`);
+  } catch (e) {
+    logTask(`compose ${action} ${file} — failed: ${e}`);
+  } finally {
+    unlisten();
+    composeBusy.value = false;
+    if (action === "up") await refreshContainers();
+  }
+}
+
+async function onComposeUp(file: string) {
+  await runCompose("up", file, composeUp);
+}
+
+async function onComposeDown(file: string) {
+  await runCompose("down", file, composeDown);
+}
+
 onMounted(async () => {
   await refreshConnections();
+  refreshSettings();
   healthUnlisten = await listen<HealthEvent>("connection-health", (event) => {
     health.value = { ...health.value, [event.payload.connectionId]: event.payload };
   });
@@ -245,6 +396,24 @@ onUnmounted(() => {
           >
             Images
           </button>
+          <button
+            :class="{ active: view === 'networks' }"
+            @click="onSwitchView('networks')"
+          >
+            Networks
+          </button>
+          <button
+            :class="{ active: view === 'volumes' }"
+            @click="onSwitchView('volumes')"
+          >
+            Volumes
+          </button>
+          <button
+            :class="{ active: view === 'compose' }"
+            @click="onSwitchView('compose')"
+          >
+            Compose
+          </button>
         </nav>
         <button
           v-if="view === 'containers'"
@@ -254,9 +423,23 @@ onUnmounted(() => {
           Refresh
         </button>
         <button
-          v-else
+          v-else-if="view === 'images'"
           :disabled="!activeId || imagesBusy"
           @click="refreshImages"
+        >
+          Refresh
+        </button>
+        <button
+          v-else-if="view === 'networks'"
+          :disabled="!activeId || networksBusy"
+          @click="refreshNetworks"
+        >
+          Refresh
+        </button>
+        <button
+          v-else-if="view === 'volumes'"
+          :disabled="!activeId || volumesBusy"
+          @click="refreshVolumes"
         >
           Refresh
         </button>
@@ -270,6 +453,12 @@ onUnmounted(() => {
           v-if="error"
           class="error"
         >{{ error }}</span>
+        <button
+          class="settings-button"
+          @click="settingsOpen = true"
+        >
+          Settings
+        </button>
       </div>
       <ContainerTable
         v-if="activeId && view === 'containers'"
@@ -289,6 +478,25 @@ onUnmounted(() => {
         @pull="onPull"
         @remove="onRemoveImage"
         @run="runImage = $event"
+      />
+      <NetworkTable
+        v-else-if="activeId && view === 'networks'"
+        :networks="networks"
+        :busy="networksBusy"
+        @remove="onRemoveNetwork"
+      />
+      <VolumeTable
+        v-else-if="activeId && view === 'volumes'"
+        :volumes="volumes"
+        :busy="volumesBusy"
+        @remove="onRemoveVolume"
+      />
+      <ComposePanel
+        v-else-if="activeId && view === 'compose'"
+        :is-local="isLocalConnection"
+        :busy="composeBusy"
+        @up="onComposeUp"
+        @down="onComposeDown"
       />
       <CreateContainerDialog
         v-if="activeId && view === 'images' && runImage"
@@ -322,15 +530,44 @@ onUnmounted(() => {
         :container-id="logsContainerId"
       />
     </main>
+    <SettingsDialog
+      v-if="settingsOpen"
+      :settings="settings"
+      @save="onSaveSettings"
+      @close="settingsOpen = false"
+    />
   </div>
 </template>
 
 <style>
+:root,
+:root[data-theme="dark"] {
+  --color-bg: #1d2126;
+  --color-fg: #e8e8e8;
+  --color-surface: #2c323a;
+  --color-input-bg: #262b32;
+  --color-input-border: #3a414b;
+  --color-border: rgba(128, 128, 128, 0.25);
+  --color-hover: rgba(128, 128, 128, 0.1);
+  --color-accent: #3f8cff;
+  --color-error: #ff6b6b;
+}
+:root[data-theme="light"] {
+  --color-bg: #f5f6f8;
+  --color-fg: #1c1f24;
+  --color-surface: #e5e7eb;
+  --color-input-bg: #ffffff;
+  --color-input-border: #c7cdd6;
+  --color-border: rgba(0, 0, 0, 0.12);
+  --color-hover: rgba(0, 0, 0, 0.06);
+  --color-accent: #2f6fe0;
+  --color-error: #c53030;
+}
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 15px;
-  color: #e8e8e8;
-  background-color: #1d2126;
+  color: var(--color-fg);
+  background-color: var(--color-bg);
 }
 body {
   margin: 0;
@@ -341,11 +578,11 @@ button {
   padding: 0.4em 0.9em;
   font-family: inherit;
   color: inherit;
-  background-color: #2c323a;
+  background-color: var(--color-surface);
   cursor: pointer;
 }
 button:hover:not(:disabled) {
-  border-color: #3f8cff;
+  border-color: var(--color-accent);
 }
 button:disabled {
   opacity: 0.45;
@@ -353,11 +590,11 @@ button:disabled {
 }
 input {
   border-radius: 6px;
-  border: 1px solid #3a414b;
+  border: 1px solid var(--color-input-border);
   padding: 0.4em 0.6em;
   font-family: inherit;
   color: inherit;
-  background-color: #262b32;
+  background-color: var(--color-input-bg);
 }
 </style>
 
@@ -368,7 +605,7 @@ input {
 }
 .sidebar {
   width: 260px;
-  border-right: 1px solid rgba(128, 128, 128, 0.25);
+  border-right: 1px solid var(--color-border);
   overflow-y: auto;
   padding: 0.5rem;
 }
@@ -394,11 +631,14 @@ input {
   margin-right: 0.5rem;
 }
 .view-nav button.active {
-  border-color: #3f8cff;
+  border-color: var(--color-accent);
 }
 .error {
-  color: #ff6b6b;
+  color: var(--color-error);
   font-size: 0.85rem;
+}
+.settings-button {
+  margin-left: auto;
 }
 .hint {
   padding: 1rem;
@@ -411,7 +651,7 @@ input {
 .exec-panel {
   flex: 1;
   min-height: 280px;
-  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  border-top: 1px solid var(--color-border);
 }
 .detail-panel {
   max-height: 40vh;
