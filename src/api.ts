@@ -76,6 +76,12 @@ export interface ContainerEvent {
   containerName: string | null;
 }
 
+export interface Settings {
+  /** "dark" | "light" | "system". */
+  theme: "dark" | "light" | "system";
+  refreshIntervalSecs: number;
+}
+
 export interface VolumeInfo {
   name: string;
   driver: string;
@@ -171,3 +177,8 @@ export const resizeExec = (execId: string, cols: number, rows: number) =>
 
 export const stopExec = (execId: string) =>
   invoke<void>("stop_exec", { execId });
+
+export const getSettings = () => invoke<Settings>("get_settings");
+
+export const saveSettings = (settings: Settings) =>
+  invoke<void>("save_settings", { settings });

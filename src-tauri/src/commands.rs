@@ -14,6 +14,7 @@ use crate::connections::{self, ConnectionInfo};
 use crate::docker::{
     self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, PortMapping, VolumeInfo,
 };
+use crate::settings::{self, Settings};
 
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -368,6 +369,16 @@ pub async fn resize_exec(
 pub fn stop_exec(state: tauri::State<'_, ExecSessions>, exec_id: String) -> Result<(), String> {
     cancel_exec_session(&state, &exec_id);
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_settings(app: tauri::AppHandle) -> Result<Settings, String> {
+    settings::load(&store_dir(&app)?)
+}
+
+#[tauri::command]
+pub fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
+    settings::save(&store_dir(&app)?, &settings)
 }
 
 #[cfg(test)]

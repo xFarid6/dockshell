@@ -164,7 +164,7 @@ th,
 td {
   text-align: left;
   padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  border-bottom: 1px solid var(--color-border);
 }
 .actions button {
   margin-right: 0.3rem;
@@ -175,7 +175,7 @@ td {
   cursor: pointer;
 }
 .row:hover {
-  background-color: rgba(128, 128, 128, 0.1);
+  background-color: var(--color-hover);
 }
 .empty {
   opacity: 0.6;
