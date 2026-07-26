@@ -1,11 +1,14 @@
 pub mod commands;
+pub mod compose;
 pub mod connections;
 pub mod docker;
+pub mod settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(commands::LogStreams::default())
         .manage(commands::EventStreams::default())
         .manage(commands::ExecSessions::default())
@@ -25,6 +28,12 @@ pub fn run() {
             commands::prune_images,
             commands::prune_volumes,
             commands::prune_networks,
+            commands::list_networks,
+            commands::remove_network,
+            commands::compose_up,
+            commands::compose_down,
+            commands::list_volumes,
+            commands::remove_volume,
             commands::start_log_stream,
             commands::stop_log_stream,
             commands::start_event_stream,
@@ -33,6 +42,8 @@ pub fn run() {
             commands::write_exec_input,
             commands::resize_exec,
             commands::stop_exec,
+            commands::get_settings,
+            commands::save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

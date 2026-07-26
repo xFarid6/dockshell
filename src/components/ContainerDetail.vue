@@ -161,7 +161,7 @@ watch(() => [props.connectionId, props.containerId], load, { immediate: true });
 
 <style scoped>
 .container-detail {
-  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  border-top: 1px solid var(--color-border);
   padding: 0.6rem;
   font-size: 0.85rem;
   overflow-y: auto;
@@ -213,13 +213,13 @@ header {
   cursor: pointer;
 }
 .copy:hover {
-  color: #3f8cff;
+  color: var(--color-accent);
 }
 .empty {
   opacity: 0.6;
   margin: 0;
 }
 .error {
-  color: #ff6b6b;
+  color: var(--color-error);
 }
 </style>

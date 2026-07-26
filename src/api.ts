@@ -7,7 +7,10 @@ export interface ConnectionInfo {
   name: string;
   /** "local" for the platform socket, or tcp://host:port for remote. */
   endpoint: string;
+  /** When true, connect over mutual TLS; the client key lives in the keyring (see `saveConnection`'s secret param). */
   useTls: boolean;
+  clientCertPath?: string | null;
+  caCertPath?: string | null;
 }
 
 export interface ContainerInfo {
@@ -82,6 +85,36 @@ export interface PruneResult {
   spaceReclaimed: number | null;
 }
 
+export interface NetworkAttachment {
+  container: string;
+  ip: string;
+}
+
+export interface NetworkInfo {
+  id: string;
+  name: string;
+  driver: string;
+  scope: string;
+  subnet: string;
+  isBuiltin: boolean;
+  attachments: NetworkAttachment[];
+}
+
+export interface Settings {
+  /** "dark" | "light" | "system". */
+  theme: "dark" | "light" | "system";
+  refreshIntervalSecs: number;
+}
+
+export interface VolumeInfo {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  created: string;
+  labels: Record<string, string>;
+  usedBy: string[];
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -145,6 +178,18 @@ export const startEventStream = (connectionId: string) =>
 export const stopEventStream = (connectionId: string) =>
   invoke<void>("stop_event_stream", { connectionId });
 
+export const listNetworks = (connectionId: string) =>
+  invoke<NetworkInfo[]>("list_networks", { connectionId });
+
+export const removeNetwork = (connectionId: string, name: string) =>
+  invoke<void>("remove_network", { connectionId, name });
+
+export const listVolumes = (connectionId: string) =>
+  invoke<VolumeInfo[]>("list_volumes", { connectionId });
+
+export const removeVolume = (connectionId: string, name: string) =>
+  invoke<void>("remove_volume", { connectionId, name });
+
 export type ExecShell = "/bin/sh" | "/bin/bash";
 
 /** Returns the exec ID: output arrives as `exec-output:{execId}` events. */
@@ -174,3 +219,21 @@ export const pruneVolumes = (connectionId: string) =>
 
 export const pruneNetworks = (connectionId: string) =>
   invoke<PruneResult>("prune_networks", { connectionId });
+
+export interface ComposeLine {
+  stream: string;
+  message: string;
+}
+
+/** Runs `docker compose -f file up -d`; only works for the local connection. Output arrives as `compose-output` events. */
+export const composeUp = (connectionId: string, file: string) =>
+  invoke<void>("compose_up", { connectionId, file });
+
+/** Runs `docker compose -f file down`; only works for the local connection. Output arrives as `compose-output` events. */
+export const composeDown = (connectionId: string, file: string) =>
+  invoke<void>("compose_down", { connectionId, file });
+
+export const getSettings = () => invoke<Settings>("get_settings");
+
+export const saveSettings = (settings: Settings) =>
+  invoke<void>("save_settings", { settings });

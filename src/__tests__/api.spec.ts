@@ -8,18 +8,24 @@ vi.mock("@tauri-apps/api/core", () => ({
 import {
   containerAction,
   createContainer,
+  getSettings,
   inspectContainer,
   listConnections,
   listContainers,
   listImages,
+  listNetworks,
+  listVolumes,
   pruneContainers,
   pruneImages,
   pruneNetworks,
   pruneVolumes,
   pullImage,
   removeImage,
+  removeNetwork,
+  removeVolume,
   resizeExec,
   saveConnection,
+  saveSettings,
   startEventStream,
   startExec,
   startLogStream,
@@ -87,6 +93,20 @@ describe("api wrappers", () => {
     });
   });
 
+  it("list_networks passes the connection id", async () => {
+    invoke.mockResolvedValue([]);
+    await listNetworks("c1");
+    expect(invoke).toHaveBeenCalledWith("list_networks", { connectionId: "c1" });
+  });
+
+  it("remove_network passes connection id and network name", async () => {
+    await removeNetwork("c1", "app-net");
+    expect(invoke).toHaveBeenCalledWith("remove_network", {
+      connectionId: "c1",
+      name: "app-net",
+    });
+  });
+
   it("pull_image passes the connection id and image ref", async () => {
     await pullImage("c1", "alpine:latest");
     expect(invoke).toHaveBeenCalledWith("pull_image", {
@@ -117,6 +137,20 @@ describe("api wrappers", () => {
       name: null,
       ports: [],
       env: [],
+    });
+  });
+
+  it("list_volumes passes the connection id", async () => {
+    invoke.mockResolvedValue([]);
+    await listVolumes("c1");
+    expect(invoke).toHaveBeenCalledWith("list_volumes", { connectionId: "c1" });
+  });
+
+  it("remove_volume passes connection id and volume name", async () => {
+    await removeVolume("c1", "data");
+    expect(invoke).toHaveBeenCalledWith("remove_volume", {
+      connectionId: "c1",
+      name: "data",
     });
   });
 
@@ -199,5 +233,17 @@ describe("api wrappers", () => {
     invoke.mockResolvedValue({ deleted: [], spaceReclaimed: null });
     await pruneNetworks("c1");
     expect(invoke).toHaveBeenCalledWith("prune_networks", { connectionId: "c1" });
+  });
+
+  it("get_settings takes no args", async () => {
+    invoke.mockResolvedValue({ theme: "system", refreshIntervalSecs: 10 });
+    await getSettings();
+    expect(invoke).toHaveBeenCalledWith("get_settings");
+  });
+
+  it("save_settings passes the settings object", async () => {
+    const settings = { theme: "light" as const, refreshIntervalSecs: 30 };
+    await saveSettings(settings);
+    expect(invoke).toHaveBeenCalledWith("save_settings", { settings });
   });
 });
