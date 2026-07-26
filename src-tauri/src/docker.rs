@@ -13,8 +13,7 @@ use bollard::query_parameters::{
     InspectContainerOptions, InspectNetworkOptionsBuilder, ListContainersOptionsBuilder,
     ListImagesOptionsBuilder, ListNetworksOptionsBuilder, ListVolumesOptionsBuilder,
     LogsOptionsBuilder, RemoveImageOptionsBuilder, RemoveVolumeOptionsBuilder,
-    ResizeExecOptionsBuilder, RestartContainerOptions,
-    StartContainerOptions, StopContainerOptions,
+    ResizeExecOptionsBuilder, RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
 use futures_util::{Stream, StreamExt};
