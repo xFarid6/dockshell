@@ -17,6 +17,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => open(...args),
 }));
 
+import CleanupDialog from "../components/CleanupDialog.vue";
 import ComposePanel from "../components/ComposePanel.vue";
 import ConnectionForm from "../components/ConnectionForm.vue";
 import ConnectionList from "../components/ConnectionList.vue";
@@ -444,6 +445,50 @@ describe("CreateContainerDialog", () => {
     const w = mount(CreateContainerDialog, {
       props: { image: "nginx:latest", busy: false },
     });
+    await w.findAll(".actions button")[1].trigger("click");
+    expect(w.emitted("close")).toHaveLength(1);
+  });
+});
+
+describe("CleanupDialog", () => {
+  it("disables Clean up until a category is checked", async () => {
+    const w = mount(CleanupDialog, { props: { busy: false } });
+    expect(w.find(".actions button").attributes("disabled")).toBeDefined();
+    await w.findAll("input[type='checkbox']")[0].setValue(true);
+    expect(w.find(".actions button").attributes("disabled")).toBeUndefined();
+  });
+
+  it("shows a confirmation naming the selected categories before pruning", async () => {
+    const w = mount(CleanupDialog, { props: { busy: false } });
+    await w.findAll("input[type='checkbox']")[0].setValue(true); // containers
+    await w.findAll("input[type='checkbox']")[2].setValue(true); // volumes
+    await w.find(".actions button").trigger("click");
+
+    expect(w.text()).toContain("permanently remove: containers, volumes");
+    expect(w.emitted("prune")).toBeUndefined();
+  });
+
+  it("only emits prune after the confirmation step", async () => {
+    const w = mount(CleanupDialog, { props: { busy: false } });
+    await w.findAll("input[type='checkbox']")[1].setValue(true); // images
+    await w.find(".actions button").trigger("click"); // -> confirm view
+    await w.find(".actions button").trigger("click"); // "Confirm removal"
+
+    expect(w.emitted("prune")).toEqual([[["images"]]]);
+  });
+
+  it("Back returns to the checkbox view without emitting prune", async () => {
+    const w = mount(CleanupDialog, { props: { busy: false } });
+    await w.findAll("input[type='checkbox']")[0].setValue(true);
+    await w.find(".actions button").trigger("click"); // -> confirm view
+    await w.findAll(".actions button")[1].trigger("click"); // "Back"
+
+    expect(w.emitted("prune")).toBeUndefined();
+    expect(w.findAll("input[type='checkbox']").length).toBe(4);
+  });
+
+  it("emits close on cancel", async () => {
+    const w = mount(CleanupDialog, { props: { busy: false } });
     await w.findAll(".actions button")[1].trigger("click");
     expect(w.emitted("close")).toHaveLength(1);
   });

@@ -13,6 +13,10 @@ import {
   listImages,
   listNetworks,
   listVolumes,
+  pruneContainers,
+  pruneImages,
+  pruneNetworks,
+  pruneVolumes,
   pullImage,
   refreshHealthMonitors,
   removeImage,
@@ -30,10 +34,12 @@ import {
   type ImageInfo,
   type NetworkInfo,
   type PortMapping,
+  type PruneResult,
   type PullProgress,
   type Settings,
   type VolumeInfo,
 } from "./api";
+import CleanupDialog from "./components/CleanupDialog.vue";
 import ComposePanel from "./components/ComposePanel.vue";
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
@@ -105,6 +111,8 @@ const logsContainerId = ref<string | null>(null);
 const execContainerId = ref<string | null>(null);
 const detailContainerId = ref<string | null>(null);
 const runImage = ref<string | null>(null);
+const cleanupOpen = ref(false);
+const cleanupBusy = ref(false);
 
 function logTask(msg: string) {
   taskLog.value.unshift(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -321,6 +329,40 @@ async function onRemoveImage(image: string) {
   await refreshImages();
 }
 
+function formatBytes(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
+}
+
+type PruneCategory = "containers" | "images" | "volumes" | "networks";
+
+const PRUNE_FNS: Record<PruneCategory, (connectionId: string) => Promise<PruneResult>> = {
+  containers: pruneContainers,
+  images: pruneImages,
+  volumes: pruneVolumes,
+  networks: pruneNetworks,
+};
+
+async function onPrune(categories: PruneCategory[]) {
+  if (!activeId.value) return;
+  const connectionId = activeId.value;
+  cleanupBusy.value = true;
+  for (const category of categories) {
+    try {
+      const result = await PRUNE_FNS[category](connectionId);
+      const freed =
+        result.spaceReclaimed != null ? `, freed ${formatBytes(result.spaceReclaimed)}` : "";
+      logTask(`prune ${category} — removed ${result.deleted.length}${freed}`);
+    } catch (e) {
+      logTask(`prune ${category} — failed: ${e}`);
+    }
+  }
+  cleanupBusy.value = false;
+  cleanupOpen.value = false;
+  if (categories.includes("containers")) await refreshContainers();
+  if (categories.includes("images")) await refreshImages();
+}
+
 async function runCompose(
   action: "up" | "down",
   file: string,
@@ -449,6 +491,12 @@ onUnmounted(() => {
         >
           Test connection
         </button>
+        <button
+          :disabled="!activeId"
+          @click="cleanupOpen = true"
+        >
+          Clean up
+        </button>
         <span
           v-if="error"
           class="error"
@@ -523,6 +571,12 @@ onUnmounted(() => {
         :connection-id="activeId"
         :container-id="execContainerId"
         class="exec-panel"
+      />
+      <CleanupDialog
+        v-if="cleanupOpen"
+        :busy="cleanupBusy"
+        @prune="onPrune"
+        @close="cleanupOpen = false"
       />
       <TaskLogPanel
         :entries="taskLog"

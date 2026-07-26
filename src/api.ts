@@ -79,6 +79,12 @@ export interface ContainerEvent {
   containerName: string | null;
 }
 
+export interface PruneResult {
+  deleted: string[];
+  /** Bytes freed; `null` for networks (nothing to reclaim). */
+  spaceReclaimed: number | null;
+}
+
 export type HealthStatus = "connecting" | "connected" | "unreachable";
 
 export interface HealthEvent {
@@ -209,6 +215,18 @@ export const resizeExec = (execId: string, cols: number, rows: number) =>
 
 export const stopExec = (execId: string) =>
   invoke<void>("stop_exec", { execId });
+
+export const pruneContainers = (connectionId: string) =>
+  invoke<PruneResult>("prune_containers", { connectionId });
+
+export const pruneImages = (connectionId: string) =>
+  invoke<PruneResult>("prune_images", { connectionId });
+
+export const pruneVolumes = (connectionId: string) =>
+  invoke<PruneResult>("prune_volumes", { connectionId });
+
+export const pruneNetworks = (connectionId: string) =>
+  invoke<PruneResult>("prune_networks", { connectionId });
 
 /** (Re)starts health polling for every saved connection; updates arrive as `connection-health` events. */
 export const refreshHealthMonitors = () =>

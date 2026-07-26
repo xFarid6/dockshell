@@ -14,8 +14,10 @@ use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, EventsOptionsBuilder,
     InspectContainerOptions, InspectNetworkOptionsBuilder, ListContainersOptionsBuilder,
     ListImagesOptionsBuilder, ListNetworksOptionsBuilder, ListVolumesOptionsBuilder,
-    LogsOptionsBuilder, RemoveImageOptionsBuilder, RemoveVolumeOptionsBuilder,
-    ResizeExecOptionsBuilder, RestartContainerOptions, StartContainerOptions, StopContainerOptions,
+    LogsOptionsBuilder, PruneContainersOptionsBuilder, PruneImagesOptionsBuilder,
+    PruneNetworksOptionsBuilder, PruneVolumesOptionsBuilder, RemoveImageOptionsBuilder,
+    RemoveVolumeOptionsBuilder, ResizeExecOptionsBuilder, RestartContainerOptions,
+    StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
 use futures_util::{Stream, StreamExt};
@@ -304,6 +306,73 @@ pub async fn remove_image(docker: &Docker, image: &str, force: bool) -> Result<(
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// What a prune call removed and how much disk space it freed. Networks
+/// don't report reclaimed space (there's nothing to reclaim), so it's `None`
+/// there.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PruneResult {
+    pub deleted: Vec<String>,
+    pub space_reclaimed: Option<i64>,
+}
+
+/// Remove stopped containers.
+pub async fn prune_containers(docker: &Docker) -> Result<PruneResult, String> {
+    let opts = PruneContainersOptionsBuilder::new().build();
+    let r = docker
+        .prune_containers(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(PruneResult {
+        deleted: r.containers_deleted.unwrap_or_default(),
+        space_reclaimed: r.space_reclaimed,
+    })
+}
+
+/// Remove dangling (untagged) images.
+pub async fn prune_images(docker: &Docker) -> Result<PruneResult, String> {
+    let opts = PruneImagesOptionsBuilder::new().build();
+    let r = docker
+        .prune_images(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(PruneResult {
+        deleted: r
+            .images_deleted
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|d| d.deleted.or(d.untagged))
+            .collect(),
+        space_reclaimed: r.space_reclaimed,
+    })
+}
+
+/// Remove volumes not referenced by any container.
+pub async fn prune_volumes(docker: &Docker) -> Result<PruneResult, String> {
+    let opts = PruneVolumesOptionsBuilder::new().build();
+    let r = docker
+        .prune_volumes(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(PruneResult {
+        deleted: r.volumes_deleted.unwrap_or_default(),
+        space_reclaimed: r.space_reclaimed,
+    })
+}
+
+/// Remove networks not used by any container (never touches `bridge`/`host`/`none`).
+pub async fn prune_networks(docker: &Docker) -> Result<PruneResult, String> {
+    let opts = PruneNetworksOptionsBuilder::new().build();
+    let r = docker
+        .prune_networks(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(PruneResult {
+        deleted: r.networks_deleted.unwrap_or_default(),
+        space_reclaimed: None,
+    })
 }
 
 /// One line of `docker pull` progress — layer id plus a human-readable status.
