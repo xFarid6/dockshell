@@ -9,8 +9,10 @@ import {
   listConnections,
   listContainers,
   listImages,
+  listVolumes,
   pullImage,
   removeImage,
+  removeVolume,
   saveConnection,
   saveSettings,
   testConnection,
@@ -21,6 +23,7 @@ import {
   type PortMapping,
   type PullProgress,
   type Settings,
+  type VolumeInfo,
 } from "./api";
 import ConnectionForm from "./components/ConnectionForm.vue";
 import ConnectionList from "./components/ConnectionList.vue";
@@ -31,6 +34,7 @@ import ExecTerminal from "./components/ExecTerminal.vue";
 import ImageTable from "./components/ImageTable.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
+import VolumeTable from "./components/VolumeTable.vue";
 
 function applyTheme(theme: Settings["theme"]) {
   const effective =
@@ -68,11 +72,13 @@ async function onSaveSettings(next: Settings) {
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
-const view = ref<"containers" | "images">("containers");
+const view = ref<"containers" | "images" | "volumes">("containers");
 const containers = ref<ContainerInfo[]>([]);
 const images = ref<ImageInfo[]>([]);
+const volumes = ref<VolumeInfo[]>([]);
 const busy = ref(false);
 const imagesBusy = ref(false);
+const volumesBusy = ref(false);
 const error = ref("");
 const taskLog = ref<string[]>([]);
 const logsContainerId = ref<string | null>(null);
@@ -116,6 +122,20 @@ async function refreshImages() {
   }
 }
 
+async function refreshVolumes() {
+  if (!activeId.value) return;
+  volumesBusy.value = true;
+  error.value = "";
+  try {
+    volumes.value = await listVolumes(activeId.value);
+  } catch (e) {
+    error.value = String(e);
+    volumes.value = [];
+  } finally {
+    volumesBusy.value = false;
+  }
+}
+
 async function onSelect(id: string) {
   activeId.value = id;
   logsContainerId.value = null;
@@ -123,11 +143,27 @@ async function onSelect(id: string) {
   detailContainerId.value = null;
   await refreshContainers();
   if (view.value === "images") await refreshImages();
+  if (view.value === "volumes") await refreshVolumes();
 }
 
-async function onSwitchView(next: "containers" | "images") {
+async function onSwitchView(next: "containers" | "images" | "volumes") {
   view.value = next;
   if (next === "images") await refreshImages();
+  if (next === "volumes") await refreshVolumes();
+}
+
+async function onRemoveVolume(name: string) {
+  if (!activeId.value) return;
+  volumesBusy.value = true;
+  try {
+    await removeVolume(activeId.value, name);
+    logTask(`remove volume ${name} — ok`);
+  } catch (e) {
+    logTask(`remove volume ${name} — failed: ${e}`);
+  } finally {
+    volumesBusy.value = false;
+  }
+  await refreshVolumes();
 }
 
 function onLogs(containerId: string) {
@@ -265,6 +301,12 @@ onMounted(() => {
           >
             Images
           </button>
+          <button
+            :class="{ active: view === 'volumes' }"
+            @click="onSwitchView('volumes')"
+          >
+            Volumes
+          </button>
         </nav>
         <button
           v-if="view === 'containers'"
@@ -274,9 +316,16 @@ onMounted(() => {
           Refresh
         </button>
         <button
-          v-else
+          v-else-if="view === 'images'"
           :disabled="!activeId || imagesBusy"
           @click="refreshImages"
+        >
+          Refresh
+        </button>
+        <button
+          v-else
+          :disabled="!activeId || volumesBusy"
+          @click="refreshVolumes"
         >
           Refresh
         </button>
@@ -315,6 +364,12 @@ onMounted(() => {
         @pull="onPull"
         @remove="onRemoveImage"
         @run="runImage = $event"
+      />
+      <VolumeTable
+        v-else-if="activeId && view === 'volumes'"
+        :volumes="volumes"
+        :busy="volumesBusy"
+        @remove="onRemoveVolume"
       />
       <CreateContainerDialog
         v-if="activeId && view === 'images' && runImage"

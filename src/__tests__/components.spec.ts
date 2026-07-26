@@ -19,12 +19,14 @@ import CreateContainerDialog from "../components/CreateContainerDialog.vue";
 import ImageTable from "../components/ImageTable.vue";
 import SettingsDialog from "../components/SettingsDialog.vue";
 import TaskLogPanel from "../components/TaskLogPanel.vue";
+import VolumeTable from "../components/VolumeTable.vue";
 import type {
   ConnectionInfo,
   ContainerDetail as ContainerDetailInfo,
   ContainerInfo,
   ImageInfo,
   Settings,
+  VolumeInfo,
 } from "../api";
 
 const conns: ConnectionInfo[] = [
@@ -237,6 +239,42 @@ describe("ImageTable", () => {
     const w = mount(ImageTable, { props: { images, busy: false } });
     await w.findAll("td.actions button")[0].trigger("click");
     expect(w.emitted("run")).toEqual([["alpine:latest"]]);
+  });
+});
+
+describe("VolumeTable", () => {
+  const volumes: VolumeInfo[] = [
+    {
+      name: "data",
+      driver: "local",
+      mountpoint: "/var/lib/docker/volumes/data/_data",
+      created: "2026-07-01T12:00:00Z",
+      labels: {},
+      usedBy: ["portainer"],
+    },
+  ];
+
+  it("renders volume rows with their used-by containers", () => {
+    const w = mount(VolumeTable, { props: { volumes, busy: false } });
+    expect(w.text()).toContain("data");
+    expect(w.text()).toContain("portainer");
+  });
+
+  it("shows a dash when a volume is unused", () => {
+    const unused = [{ ...volumes[0], usedBy: [] }];
+    const w = mount(VolumeTable, { props: { volumes: unused, busy: false } });
+    expect(w.text()).toContain("—");
+  });
+
+  it("shows an empty state", () => {
+    const w = mount(VolumeTable, { props: { volumes: [], busy: false } });
+    expect(w.text()).toContain("No volumes.");
+  });
+
+  it("emits remove with the volume name", async () => {
+    const w = mount(VolumeTable, { props: { volumes, busy: false } });
+    await w.find(".actions button").trigger("click");
+    expect(w.emitted("remove")).toEqual([["data"]]);
   });
 });
 

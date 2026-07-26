@@ -22,6 +22,8 @@ pub fn run() {
             commands::list_images,
             commands::remove_image,
             commands::pull_image,
+            commands::list_volumes,
+            commands::remove_volume,
             commands::start_log_stream,
             commands::stop_log_stream,
             commands::start_event_stream,
