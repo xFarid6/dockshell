@@ -1,14 +1,11 @@
-//! Saved Docker host connections. Name/endpoint live in a JSON file in the
+//! Saved Docker host connections. Thin adapter over the shared
+//! `conn-manager` crate (issue #14): name/endpoint live in a JSON file in the
 //! app config dir; any secret material (TLS client key, issue #7) lives only
 //! in the OS keyring (Windows Credential Manager / macOS Keychain / Secret
 //! Service) — never on disk, never logged.
-//!
-//! Same pattern as proxmox-desktop's `connections.rs`, refactored to take the
-//! store directory as a parameter so the file store is testable without a
-//! Tauri `AppHandle`.
 
+use conn_manager::{Profile, ProfileStore};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 const KEYRING_SERVICE: &str = "dockshell";
@@ -33,63 +30,37 @@ pub struct ConnectionInfo {
     pub ca_cert_path: Option<String>,
 }
 
-fn store_file(dir: &Path) -> PathBuf {
-    dir.join("connections.json")
+impl Profile for ConnectionInfo {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+fn store(dir: &Path) -> ProfileStore {
+    ProfileStore::new(dir.to_path_buf(), KEYRING_SERVICE)
 }
 
 pub fn load(dir: &Path) -> Result<Vec<ConnectionInfo>, String> {
-    let path = store_file(dir);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| e.to_string())
-}
-
-fn save_all(dir: &Path, conns: &[ConnectionInfo]) -> Result<(), String> {
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let raw = serde_json::to_string_pretty(conns).map_err(|e| e.to_string())?;
-    fs::write(store_file(dir), raw).map_err(|e| e.to_string())
+    store(dir).load()
 }
 
 pub fn get(dir: &Path, id: &str) -> Result<ConnectionInfo, String> {
-    load(dir)?
-        .into_iter()
-        .find(|c| c.id == id)
-        .ok_or_else(|| format!("unknown connection: {id}"))
+    store(dir).get(id)
 }
 
-fn secret_entry(id: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, id).map_err(|e| e.to_string())
-}
-
+/// `get_secret` needs no profile-store directory — the secret lives only in
+/// the keyring — so it builds a `ProfileStore` with an unused, never-read dir.
 pub fn get_secret(id: &str) -> Result<String, String> {
-    secret_entry(id)?.get_password().map_err(|e| e.to_string())
+    store(&PathBuf::new()).get_secret(id)
 }
 
 /// Upsert a connection; `secret` is written to the keyring when provided.
 pub fn save(dir: &Path, info: ConnectionInfo, secret: Option<String>) -> Result<(), String> {
-    if let Some(s) = secret {
-        secret_entry(&info.id)?
-            .set_password(&s)
-            .map_err(|e| e.to_string())?;
-    }
-    let mut conns = load(dir)?;
-    match conns.iter_mut().find(|c| c.id == info.id) {
-        Some(existing) => *existing = info,
-        None => conns.push(info),
-    }
-    save_all(dir, &conns)
+    store(dir).save(info, secret)
 }
 
 pub fn delete(dir: &Path, id: &str) -> Result<(), String> {
-    // Best effort — the entry may already be gone.
-    if let Ok(entry) = secret_entry(id) {
-        let _ = entry.delete_credential();
-    }
-    let mut conns = load(dir)?;
-    conns.retain(|c| c.id != id);
-    save_all(dir, &conns)
+    store(dir).delete::<ConnectionInfo>(id)
 }
 
 #[cfg(test)]
@@ -153,8 +124,8 @@ mod tests {
     #[test]
     fn pre_tls_connections_json_still_loads() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            store_file(dir.path()),
+        std::fs::write(
+            dir.path().join("connections.json"),
             r#"[{"id":"a","name":"old","endpoint":"tcp://192.168.1.105:2375","useTls":false}]"#,
         )
         .unwrap();
