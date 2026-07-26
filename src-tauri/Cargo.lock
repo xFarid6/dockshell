@@ -546,6 +546,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "conn-manager"
+version = "0.1.0"
+source = "git+https://github.com/xFarid6/conn-manager-rs?branch=main#34e5e26fa07eb342bb2dfcd2a64e01690517d288"
+dependencies = [
+ "keyring",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cookie"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -872,8 +882,8 @@ name = "dockshell"
 version = "0.1.0"
 dependencies = [
  "bollard",
+ "conn-manager",
  "futures-util",
- "keyring",
  "serde",
  "serde_json",
  "tauri",

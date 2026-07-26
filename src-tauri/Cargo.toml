@@ -25,8 +25,9 @@ serde_json = "1"
 bollard = { version = "0.19", features = ["ssl"] }
 tokio = { version = "1", features = ["macros", "process"] }
 futures-util = "0.3"
-# Same keyring setup as proxmox-desktop (no Android target here yet).
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# Shared profile-store + keyring crate (issue #14); connections.rs is a thin
+# adapter over it.
+conn-manager = { git = "https://github.com/xFarid6/conn-manager-rs", branch = "main" }
 
 [dev-dependencies]
 wiremock = "0.6"
