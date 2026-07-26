@@ -76,6 +76,21 @@ export interface ContainerEvent {
   containerName: string | null;
 }
 
+export interface NetworkAttachment {
+  container: string;
+  ip: string;
+}
+
+export interface NetworkInfo {
+  id: string;
+  name: string;
+  driver: string;
+  scope: string;
+  subnet: string;
+  isBuiltin: boolean;
+  attachments: NetworkAttachment[];
+}
+
 export interface Settings {
   /** "dark" | "light" | "system". */
   theme: "dark" | "light" | "system";
@@ -153,6 +168,12 @@ export const startEventStream = (connectionId: string) =>
 
 export const stopEventStream = (connectionId: string) =>
   invoke<void>("stop_event_stream", { connectionId });
+
+export const listNetworks = (connectionId: string) =>
+  invoke<NetworkInfo[]>("list_networks", { connectionId });
+
+export const removeNetwork = (connectionId: string, name: string) =>
+  invoke<void>("remove_network", { connectionId, name });
 
 export const listVolumes = (connectionId: string) =>
   invoke<VolumeInfo[]>("list_volumes", { connectionId });

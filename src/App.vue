@@ -11,9 +11,11 @@ import {
   listConnections,
   listContainers,
   listImages,
+  listNetworks,
   listVolumes,
   pullImage,
   removeImage,
+  removeNetwork,
   removeVolume,
   saveConnection,
   saveSettings,
@@ -23,6 +25,7 @@ import {
   type ContainerAction,
   type ContainerInfo,
   type ImageInfo,
+  type NetworkInfo,
   type PortMapping,
   type PullProgress,
   type Settings,
@@ -36,6 +39,7 @@ import ContainerTable from "./components/ContainerTable.vue";
 import CreateContainerDialog from "./components/CreateContainerDialog.vue";
 import ExecTerminal from "./components/ExecTerminal.vue";
 import ImageTable from "./components/ImageTable.vue";
+import NetworkTable from "./components/NetworkTable.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
 import VolumeTable from "./components/VolumeTable.vue";
@@ -76,16 +80,18 @@ async function onSaveSettings(next: Settings) {
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
-const view = ref<"containers" | "images" | "volumes" | "compose">("containers");
+const view = ref<"containers" | "images" | "networks" | "volumes" | "compose">("containers");
 const composeBusy = ref(false);
 const isLocalConnection = computed(
   () => connections.value.find((c) => c.id === activeId.value)?.endpoint === "local",
 );
 const containers = ref<ContainerInfo[]>([]);
 const images = ref<ImageInfo[]>([]);
+const networks = ref<NetworkInfo[]>([]);
 const volumes = ref<VolumeInfo[]>([]);
 const busy = ref(false);
 const imagesBusy = ref(false);
+const networksBusy = ref(false);
 const volumesBusy = ref(false);
 const error = ref("");
 const taskLog = ref<string[]>([]);
@@ -130,6 +136,20 @@ async function refreshImages() {
   }
 }
 
+async function refreshNetworks() {
+  if (!activeId.value) return;
+  networksBusy.value = true;
+  error.value = "";
+  try {
+    networks.value = await listNetworks(activeId.value);
+  } catch (e) {
+    error.value = String(e);
+    networks.value = [];
+  } finally {
+    networksBusy.value = false;
+  }
+}
+
 async function refreshVolumes() {
   if (!activeId.value) return;
   volumesBusy.value = true;
@@ -151,13 +171,29 @@ async function onSelect(id: string) {
   detailContainerId.value = null;
   await refreshContainers();
   if (view.value === "images") await refreshImages();
+  if (view.value === "networks") await refreshNetworks();
   if (view.value === "volumes") await refreshVolumes();
 }
 
-async function onSwitchView(next: "containers" | "images" | "volumes" | "compose") {
+async function onSwitchView(next: "containers" | "images" | "networks" | "volumes" | "compose") {
   view.value = next;
   if (next === "images") await refreshImages();
+  if (next === "networks") await refreshNetworks();
   if (next === "volumes") await refreshVolumes();
+}
+
+async function onRemoveNetwork(name: string) {
+  if (!activeId.value) return;
+  networksBusy.value = true;
+  try {
+    await removeNetwork(activeId.value, name);
+    logTask(`remove network ${name} — ok`);
+  } catch (e) {
+    logTask(`remove network ${name} — failed: ${e}`);
+  } finally {
+    networksBusy.value = false;
+  }
+  await refreshNetworks();
 }
 
 async function onRemoveVolume(name: string) {
@@ -342,6 +378,12 @@ onMounted(() => {
             Images
           </button>
           <button
+            :class="{ active: view === 'networks' }"
+            @click="onSwitchView('networks')"
+          >
+            Networks
+          </button>
+          <button
             :class="{ active: view === 'volumes' }"
             @click="onSwitchView('volumes')"
           >
@@ -365,6 +407,13 @@ onMounted(() => {
           v-else-if="view === 'images'"
           :disabled="!activeId || imagesBusy"
           @click="refreshImages"
+        >
+          Refresh
+        </button>
+        <button
+          v-else-if="view === 'networks'"
+          :disabled="!activeId || networksBusy"
+          @click="refreshNetworks"
         >
           Refresh
         </button>
@@ -410,6 +459,12 @@ onMounted(() => {
         @pull="onPull"
         @remove="onRemoveImage"
         @run="runImage = $event"
+      />
+      <NetworkTable
+        v-else-if="activeId && view === 'networks'"
+        :networks="networks"
+        :busy="networksBusy"
+        @remove="onRemoveNetwork"
       />
       <VolumeTable
         v-else-if="activeId && view === 'volumes'"

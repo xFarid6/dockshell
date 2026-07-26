@@ -568,3 +568,90 @@ async fn streams_tty_exec_output_over_the_upgraded_connection() {
     let chunk = output.next().await.unwrap().unwrap();
     assert_eq!(chunk, "/ # ");
 }
+
+#[tokio::test]
+async fn lists_networks_with_attachments_from_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "Id": "b1",
+                "Name": "bridge",
+                "Driver": "bridge",
+                "Scope": "local",
+                "IPAM": { "Config": [{ "Subnet": "172.17.0.0/16" }] }
+            },
+            {
+                "Id": "n1",
+                "Name": "app-net",
+                "Driver": "bridge",
+                "Scope": "local",
+                "IPAM": { "Config": [{ "Subnet": "172.20.0.0/16" }] }
+            }
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks/bridge$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": "b1",
+            "Name": "bridge",
+            "Driver": "bridge",
+            "Scope": "local",
+            "Containers": {}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks/app-net$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": "n1",
+            "Name": "app-net",
+            "Driver": "bridge",
+            "Scope": "local",
+            "Containers": {
+                "abc123": { "Name": "portainer", "IPv4Address": "172.20.0.2/16" }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    let networks = docker::list_networks(&client).await.unwrap();
+
+    assert_eq!(networks.len(), 2);
+    let bridge = networks.iter().find(|n| n.name == "bridge").unwrap();
+    assert!(bridge.is_builtin);
+    assert!(bridge.attachments.is_empty());
+    let app_net = networks.iter().find(|n| n.name == "app-net").unwrap();
+    assert!(!app_net.is_builtin);
+    assert_eq!(app_net.subnet, "172.20.0.0/16");
+    assert_eq!(app_net.attachments.len(), 1);
+    assert_eq!(app_net.attachments[0].container, "portainer");
+    assert_eq!(app_net.attachments[0].ip, "172.20.0.2/16");
+}
+
+#[tokio::test]
+async fn removes_a_network_via_engine_api() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path_regex(r"^(/v[0-9.]+)?/networks/app-net$"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+    docker::remove_network(&client, "app-net").await.unwrap();
+}
+
+#[tokio::test]
+async fn remove_network_rejects_a_builtin_network_without_calling_the_engine() {
+    // No mocks registered — a call reaching the (mock) server would 404 and
+    // this would fail, proving the built-in guard runs before any request.
+    let server = MockServer::start().await;
+    let client = docker::client_for(&conn_for(&server)).unwrap();
+
+    let err = docker::remove_network(&client, "bridge").await.unwrap_err();
+    assert!(err.contains("bridge"));
+}

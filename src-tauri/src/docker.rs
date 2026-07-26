@@ -10,10 +10,10 @@ use bollard::models::MountPointTypeEnum;
 use bollard::models::{ContainerCreateBody, HostConfig, PortBinding as ModelPortBinding};
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, EventsOptionsBuilder,
-    InspectContainerOptions, ListContainersOptionsBuilder, ListImagesOptionsBuilder,
-    ListVolumesOptionsBuilder, LogsOptionsBuilder, RemoveImageOptionsBuilder,
-    RemoveVolumeOptionsBuilder, ResizeExecOptionsBuilder, RestartContainerOptions,
-    StartContainerOptions, StopContainerOptions,
+    InspectContainerOptions, InspectNetworkOptionsBuilder, ListContainersOptionsBuilder,
+    ListImagesOptionsBuilder, ListNetworksOptionsBuilder, ListVolumesOptionsBuilder,
+    LogsOptionsBuilder, RemoveImageOptionsBuilder, RemoveVolumeOptionsBuilder,
+    ResizeExecOptionsBuilder, RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::Docker;
 use futures_util::{Stream, StreamExt};
@@ -572,4 +572,110 @@ pub async fn resize_exec(
         .resize_exec(exec_id, opts)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Networks Docker creates on every engine; not user-removable.
+fn is_builtin_network(name: &str) -> bool {
+    matches!(name, "bridge" | "host" | "none")
+}
+
+/// A container attached to a network, from the network's `Containers` map.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkAttachment {
+    pub container: String,
+    pub ip: String,
+}
+
+/// What the frontend renders per network row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkInfo {
+    pub id: String,
+    pub name: String,
+    pub driver: String,
+    pub scope: String,
+    pub subnet: String,
+    pub is_builtin: bool,
+    pub attachments: Vec<NetworkAttachment>,
+}
+
+/// List networks, inspecting each one to pull its `Containers` map — the
+/// list endpoint alone doesn't report attachments.
+pub async fn list_networks(docker: &Docker) -> Result<Vec<NetworkInfo>, String> {
+    let opts = ListNetworksOptionsBuilder::new().build();
+    let networks = docker
+        .list_networks(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::with_capacity(networks.len());
+    for n in networks {
+        let name = n.name.unwrap_or_default();
+        let detail = docker
+            .inspect_network(&name, Some(InspectNetworkOptionsBuilder::new().build()))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let attachments = detail
+            .containers
+            .unwrap_or_default()
+            .into_values()
+            .map(|c| NetworkAttachment {
+                container: c.name.unwrap_or_default(),
+                ip: c.ipv4_address.unwrap_or_default(),
+            })
+            .collect();
+
+        let subnet = n
+            .ipam
+            .as_ref()
+            .and_then(|i| i.config.as_ref())
+            .and_then(|c| c.first())
+            .and_then(|c| c.subnet.clone())
+            .unwrap_or_default();
+
+        out.push(NetworkInfo {
+            id: n.id.unwrap_or_default(),
+            is_builtin: is_builtin_network(&name),
+            name,
+            driver: n.driver.unwrap_or_default(),
+            scope: n.scope.unwrap_or_default(),
+            subnet,
+            attachments,
+        });
+    }
+    Ok(out)
+}
+
+/// Refuse to remove the built-in `bridge`/`host`/`none` networks — the
+/// engine allows it but it breaks every container relying on them.
+fn ensure_removable(name: &str) -> Result<(), String> {
+    if is_builtin_network(name) {
+        return Err(format!("cannot remove the built-in \"{name}\" network"));
+    }
+    Ok(())
+}
+
+pub async fn remove_network(docker: &Docker, name: &str) -> Result<(), String> {
+    ensure_removable(name)?;
+    docker.remove_network(name).await.map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_removing_a_builtin_network() {
+        for name in ["bridge", "host", "none"] {
+            let err = ensure_removable(name).unwrap_err();
+            assert!(err.contains(name));
+        }
+    }
+
+    #[test]
+    fn accepts_removing_a_user_network() {
+        assert!(ensure_removable("my-net").is_ok());
+    }
 }

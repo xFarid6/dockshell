@@ -23,6 +23,7 @@ import ContainerDetail from "../components/ContainerDetail.vue";
 import ContainerTable from "../components/ContainerTable.vue";
 import CreateContainerDialog from "../components/CreateContainerDialog.vue";
 import ImageTable from "../components/ImageTable.vue";
+import NetworkTable from "../components/NetworkTable.vue";
 import SettingsDialog from "../components/SettingsDialog.vue";
 import TaskLogPanel from "../components/TaskLogPanel.vue";
 import VolumeTable from "../components/VolumeTable.vue";
@@ -31,6 +32,7 @@ import type {
   ContainerDetail as ContainerDetailInfo,
   ContainerInfo,
   ImageInfo,
+  NetworkInfo,
   Settings,
   VolumeInfo,
 } from "../api";
@@ -245,6 +247,61 @@ describe("ImageTable", () => {
     const w = mount(ImageTable, { props: { images, busy: false } });
     await w.findAll("td.actions button")[0].trigger("click");
     expect(w.emitted("run")).toEqual([["alpine:latest"]]);
+  });
+});
+
+describe("NetworkTable (#5)", () => {
+  const networks: NetworkInfo[] = [
+    {
+      id: "n1",
+      name: "app-net",
+      driver: "bridge",
+      scope: "local",
+      subnet: "172.20.0.0/16",
+      isBuiltin: false,
+      attachments: [{ container: "portainer", ip: "172.20.0.2/16" }],
+    },
+    {
+      id: "b1",
+      name: "bridge",
+      driver: "bridge",
+      scope: "local",
+      subnet: "172.17.0.0/16",
+      isBuiltin: true,
+      attachments: [],
+    },
+  ];
+
+  it("renders network rows with their attached containers", () => {
+    const w = mount(NetworkTable, { props: { networks, busy: false } });
+    expect(w.text()).toContain("app-net");
+    expect(w.text()).toContain("172.20.0.0/16");
+    expect(w.text()).toContain("portainer");
+  });
+
+  it("shows a dash when a network has no attachments or subnet", () => {
+    const w = mount(NetworkTable, {
+      props: { networks: [networks[1]], busy: false },
+    });
+    expect(w.text()).toContain("—");
+  });
+
+  it("shows an empty state", () => {
+    const w = mount(NetworkTable, { props: { networks: [], busy: false } });
+    expect(w.text()).toContain("No networks.");
+  });
+
+  it("disables remove for a built-in network", () => {
+    const w = mount(NetworkTable, { props: { networks, busy: false } });
+    const buttons = w.findAll("td.actions button");
+    expect(buttons[0].attributes("disabled")).toBeUndefined(); // app-net
+    expect(buttons[1].attributes("disabled")).toBeDefined(); // bridge
+  });
+
+  it("emits remove with the network name", async () => {
+    const w = mount(NetworkTable, { props: { networks, busy: false } });
+    await w.findAll("td.actions button")[0].trigger("click");
+    expect(w.emitted("remove")).toEqual([["app-net"]]);
   });
 });
 

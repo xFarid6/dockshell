@@ -24,6 +24,8 @@ pub fn run() {
             commands::list_images,
             commands::remove_image,
             commands::pull_image,
+            commands::list_networks,
+            commands::remove_network,
             commands::compose_up,
             commands::compose_down,
             commands::list_volumes,

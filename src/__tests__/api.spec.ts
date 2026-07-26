@@ -13,9 +13,11 @@ import {
   listConnections,
   listContainers,
   listImages,
+  listNetworks,
   listVolumes,
   pullImage,
   removeImage,
+  removeNetwork,
   removeVolume,
   resizeExec,
   saveConnection,
@@ -84,6 +86,20 @@ describe("api wrappers", () => {
       connectionId: "c1",
       image: "alpine:latest",
       force: false,
+    });
+  });
+
+  it("list_networks passes the connection id", async () => {
+    invoke.mockResolvedValue([]);
+    await listNetworks("c1");
+    expect(invoke).toHaveBeenCalledWith("list_networks", { connectionId: "c1" });
+  });
+
+  it("remove_network passes connection id and network name", async () => {
+    await removeNetwork("c1", "app-net");
+    expect(invoke).toHaveBeenCalledWith("remove_network", {
+      connectionId: "c1",
+      name: "app-net",
     });
   });
 

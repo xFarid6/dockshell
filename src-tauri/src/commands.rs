@@ -13,7 +13,8 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::compose;
 use crate::connections::{self, ConnectionInfo};
 use crate::docker::{
-    self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, PortMapping, VolumeInfo,
+    self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, NetworkInfo, PortMapping,
+    VolumeInfo,
 };
 use crate::settings::{self, Settings};
 
@@ -137,6 +138,27 @@ pub async fn pull_image(
         let _ = app.emit(&event, progress);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_networks(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<NetworkInfo>, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::list_networks(&client).await
+}
+
+#[tauri::command]
+pub async fn remove_network(
+    app: tauri::AppHandle,
+    connection_id: String,
+    name: String,
+) -> Result<(), String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::remove_network(&client, &name).await
 }
 
 /// Forward `docker compose`'s stdout/stderr to the frontend as `compose-output`
