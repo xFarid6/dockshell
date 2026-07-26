@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import type { ConnectionInfo } from "../api";
+import type { ConnectionInfo, HealthEvent } from "../api";
 
-defineProps<{
+const props = defineProps<{
   connections: ConnectionInfo[];
   activeId: string | null;
+  health?: Record<string, HealthEvent>;
 }>();
 
 defineEmits<{
   select: [id: string];
   remove: [id: string];
 }>();
+
+function healthTitle(id: string): string {
+  const h = props.health?.[id];
+  if (!h) return "Status unknown";
+  if (h.status === "unreachable") return `Unreachable${h.error ? `: ${h.error}` : ""}`;
+  if (h.status === "connecting") return "Connecting…";
+  return "Connected";
+}
 </script>
 
 <template>
@@ -19,6 +28,11 @@ defineEmits<{
       :key="c.id"
       :class="{ active: c.id === activeId }"
     >
+      <span
+        class="health-dot"
+        :class="health?.[c.id]?.status ?? 'unknown'"
+        :title="healthTitle(c.id)"
+      />
       <button
         class="name"
         @click="$emit('select', c.id)"
@@ -56,6 +70,23 @@ defineEmits<{
 }
 .connection-list li.active .name {
   font-weight: 700;
+}
+.health-dot {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  border-radius: 50%;
+  margin-left: 0.5rem;
+  background-color: rgba(128, 128, 128, 0.5);
+}
+.health-dot.connected {
+  background-color: #3ecf6b;
+}
+.health-dot.connecting {
+  background-color: #e0a52c;
+}
+.health-dot.unreachable {
+  background-color: #ff6b6b;
 }
 .name {
   flex: 1;

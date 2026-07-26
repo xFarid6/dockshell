@@ -16,6 +16,7 @@ import {
   listNetworks,
   listVolumes,
   pullImage,
+  refreshHealthMonitors,
   removeImage,
   removeNetwork,
   removeVolume,
@@ -27,6 +28,7 @@ import {
   startLogStream,
   stopEventStream,
   stopExec,
+  stopHealthMonitors,
   stopLogStream,
   writeExecInput,
 } from "../api";
@@ -205,6 +207,16 @@ describe("api wrappers", () => {
   it("stop_exec passes the exec id", async () => {
     await stopExec("exec1");
     expect(invoke).toHaveBeenCalledWith("stop_exec", { execId: "exec1" });
+  });
+
+  it("refresh_health_monitors takes no args", async () => {
+    await refreshHealthMonitors();
+    expect(invoke).toHaveBeenCalledWith("refresh_health_monitors");
+  });
+
+  it("stop_health_monitors takes no args", async () => {
+    await stopHealthMonitors();
+    expect(invoke).toHaveBeenCalledWith("stop_health_monitors");
   });
 
   it("get_settings takes no args", async () => {

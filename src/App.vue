@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { computed, onMounted, onUnmounted, ref } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   composeDown,
   composeUp,
@@ -14,16 +14,19 @@ import {
   listNetworks,
   listVolumes,
   pullImage,
+  refreshHealthMonitors,
   removeImage,
   removeNetwork,
   removeVolume,
   saveConnection,
+  stopHealthMonitors,
   saveSettings,
   testConnection,
   type ComposeLine,
   type ConnectionInfo,
   type ContainerAction,
   type ContainerInfo,
+  type HealthEvent,
   type ImageInfo,
   type NetworkInfo,
   type PortMapping,
@@ -77,6 +80,9 @@ async function onSaveSettings(next: Settings) {
   settingsOpen.value = false;
   logTask("settings saved");
 }
+
+const health = ref<Record<string, HealthEvent>>({});
+let healthUnlisten: UnlistenFn | null = null;
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
@@ -225,6 +231,7 @@ function onDetail(containerId: string) {
 async function onSave(info: ConnectionInfo, secret: string | undefined) {
   await saveConnection(info, secret);
   await refreshConnections();
+  await refreshHealthMonitors();
   logTask(`saved connection "${info.name}"`);
 }
 
@@ -236,7 +243,9 @@ async function onRemove(id: string) {
     logsContainerId.value = null;
     execContainerId.value = null;
   }
+  delete health.value[id];
   await refreshConnections();
+  await refreshHealthMonitors();
 }
 
 async function onTest() {
@@ -344,9 +353,18 @@ async function onComposeDown(file: string) {
   await runCompose("down", file, composeDown);
 }
 
-onMounted(() => {
-  refreshConnections();
+onMounted(async () => {
+  await refreshConnections();
   refreshSettings();
+  healthUnlisten = await listen<HealthEvent>("connection-health", (event) => {
+    health.value = { ...health.value, [event.payload.connectionId]: event.payload };
+  });
+  await refreshHealthMonitors();
+});
+
+onUnmounted(() => {
+  healthUnlisten?.();
+  stopHealthMonitors();
 });
 </script>
 
@@ -357,6 +375,7 @@ onMounted(() => {
       <ConnectionList
         :connections="connections"
         :active-id="activeId"
+        :health="health"
         @select="onSelect"
         @remove="onRemove"
       />
