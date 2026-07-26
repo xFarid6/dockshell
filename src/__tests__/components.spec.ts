@@ -23,12 +23,16 @@ import ContainerDetail from "../components/ContainerDetail.vue";
 import ContainerTable from "../components/ContainerTable.vue";
 import CreateContainerDialog from "../components/CreateContainerDialog.vue";
 import ImageTable from "../components/ImageTable.vue";
+import SettingsDialog from "../components/SettingsDialog.vue";
 import TaskLogPanel from "../components/TaskLogPanel.vue";
+import VolumeTable from "../components/VolumeTable.vue";
 import type {
   ConnectionInfo,
   ContainerDetail as ContainerDetailInfo,
   ContainerInfo,
   ImageInfo,
+  Settings,
+  VolumeInfo,
 } from "../api";
 
 const conns: ConnectionInfo[] = [
@@ -244,6 +248,42 @@ describe("ImageTable", () => {
   });
 });
 
+describe("VolumeTable", () => {
+  const volumes: VolumeInfo[] = [
+    {
+      name: "data",
+      driver: "local",
+      mountpoint: "/var/lib/docker/volumes/data/_data",
+      created: "2026-07-01T12:00:00Z",
+      labels: {},
+      usedBy: ["portainer"],
+    },
+  ];
+
+  it("renders volume rows with their used-by containers", () => {
+    const w = mount(VolumeTable, { props: { volumes, busy: false } });
+    expect(w.text()).toContain("data");
+    expect(w.text()).toContain("portainer");
+  });
+
+  it("shows a dash when a volume is unused", () => {
+    const unused = [{ ...volumes[0], usedBy: [] }];
+    const w = mount(VolumeTable, { props: { volumes: unused, busy: false } });
+    expect(w.text()).toContain("—");
+  });
+
+  it("shows an empty state", () => {
+    const w = mount(VolumeTable, { props: { volumes: [], busy: false } });
+    expect(w.text()).toContain("No volumes.");
+  });
+
+  it("emits remove with the volume name", async () => {
+    const w = mount(VolumeTable, { props: { volumes, busy: false } });
+    await w.find(".actions button").trigger("click");
+    expect(w.emitted("remove")).toEqual([["data"]]);
+  });
+});
+
 describe("CreateContainerDialog", () => {
   it("emits create with trimmed name and filtered ports/env", async () => {
     const w = mount(CreateContainerDialog, {
@@ -278,6 +318,31 @@ describe("CreateContainerDialog", () => {
     const w = mount(CreateContainerDialog, {
       props: { image: "nginx:latest", busy: false },
     });
+    await w.findAll(".actions button")[1].trigger("click");
+    expect(w.emitted("close")).toHaveLength(1);
+  });
+});
+
+describe("SettingsDialog", () => {
+  const settings: Settings = { theme: "system", refreshIntervalSecs: 10 };
+
+  it("emits save with the edited theme and interval", async () => {
+    const w = mount(SettingsDialog, { props: { settings } });
+    await w.find("select").setValue("light");
+    await w.find("input[type='number']").setValue(30);
+    await w.find(".actions button").trigger("click");
+    expect(w.emitted("save")).toEqual([[{ theme: "light", refreshIntervalSecs: 30 }]]);
+  });
+
+  it("clamps a zero/blank interval to 1 on save", async () => {
+    const w = mount(SettingsDialog, { props: { settings } });
+    await w.find("input[type='number']").setValue(0);
+    await w.find(".actions button").trigger("click");
+    expect(w.emitted("save")).toEqual([[{ theme: "system", refreshIntervalSecs: 1 }]]);
+  });
+
+  it("emits close on cancel", async () => {
+    const w = mount(SettingsDialog, { props: { settings } });
     await w.findAll(".actions button")[1].trigger("click");
     expect(w.emitted("close")).toHaveLength(1);
   });

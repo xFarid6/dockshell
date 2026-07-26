@@ -8,14 +8,18 @@ vi.mock("@tauri-apps/api/core", () => ({
 import {
   containerAction,
   createContainer,
+  getSettings,
   inspectContainer,
   listConnections,
   listContainers,
   listImages,
+  listVolumes,
   pullImage,
   removeImage,
+  removeVolume,
   resizeExec,
   saveConnection,
+  saveSettings,
   startEventStream,
   startExec,
   startLogStream,
@@ -116,6 +120,20 @@ describe("api wrappers", () => {
     });
   });
 
+  it("list_volumes passes the connection id", async () => {
+    invoke.mockResolvedValue([]);
+    await listVolumes("c1");
+    expect(invoke).toHaveBeenCalledWith("list_volumes", { connectionId: "c1" });
+  });
+
+  it("remove_volume passes connection id and volume name", async () => {
+    await removeVolume("c1", "data");
+    expect(invoke).toHaveBeenCalledWith("remove_volume", {
+      connectionId: "c1",
+      name: "data",
+    });
+  });
+
   it("start_log_stream passes connection and container ids", async () => {
     await startLogStream("c1", "abc");
     expect(invoke).toHaveBeenCalledWith("start_log_stream", {
@@ -171,5 +189,17 @@ describe("api wrappers", () => {
   it("stop_exec passes the exec id", async () => {
     await stopExec("exec1");
     expect(invoke).toHaveBeenCalledWith("stop_exec", { execId: "exec1" });
+  });
+
+  it("get_settings takes no args", async () => {
+    invoke.mockResolvedValue({ theme: "system", refreshIntervalSecs: 10 });
+    await getSettings();
+    expect(invoke).toHaveBeenCalledWith("get_settings");
+  });
+
+  it("save_settings passes the settings object", async () => {
+    const settings = { theme: "light" as const, refreshIntervalSecs: 30 };
+    await saveSettings(settings);
+    expect(invoke).toHaveBeenCalledWith("save_settings", { settings });
   });
 });

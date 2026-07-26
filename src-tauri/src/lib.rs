@@ -2,6 +2,7 @@ pub mod commands;
 pub mod compose;
 pub mod connections;
 pub mod docker;
+pub mod settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -25,6 +26,8 @@ pub fn run() {
             commands::pull_image,
             commands::compose_up,
             commands::compose_down,
+            commands::list_volumes,
+            commands::remove_volume,
             commands::start_log_stream,
             commands::stop_log_stream,
             commands::start_event_stream,
@@ -33,6 +36,8 @@ pub fn run() {
             commands::write_exec_input,
             commands::resize_exec,
             commands::stop_exec,
+            commands::get_settings,
+            commands::save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

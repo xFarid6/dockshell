@@ -110,7 +110,7 @@ function submit() {
 
 <style scoped>
 .dialog {
-  border: 1px solid rgba(128, 128, 128, 0.25);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 0.8rem 1rem;
   margin: 0.5rem 0.6rem;

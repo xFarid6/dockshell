@@ -107,7 +107,7 @@ onUnmounted(() => {
 
 <style scoped>
 .task-log-panel {
-  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  border-top: 1px solid var(--color-border);
   padding: 0.5rem;
   font-size: 0.85rem;
   max-height: 10rem;
@@ -127,7 +127,7 @@ ol {
   font-family: monospace;
 }
 .log-lines li.stderr {
-  color: #ff6b6b;
+  color: var(--color-error);
 }
 .empty {
   opacity: 0.6;
