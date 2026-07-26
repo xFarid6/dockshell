@@ -76,6 +76,21 @@ export interface ContainerEvent {
   containerName: string | null;
 }
 
+export interface NetworkAttachment {
+  container: string;
+  ip: string;
+}
+
+export interface NetworkInfo {
+  id: string;
+  name: string;
+  driver: string;
+  scope: string;
+  subnet: string;
+  isBuiltin: boolean;
+  attachments: NetworkAttachment[];
+}
+
 export const listConnections = () =>
   invoke<ConnectionInfo[]>("list_connections");
 
@@ -138,6 +153,12 @@ export const startEventStream = (connectionId: string) =>
 
 export const stopEventStream = (connectionId: string) =>
   invoke<void>("stop_event_stream", { connectionId });
+
+export const listNetworks = (connectionId: string) =>
+  invoke<NetworkInfo[]>("list_networks", { connectionId });
+
+export const removeNetwork = (connectionId: string, name: string) =>
+  invoke<void>("remove_network", { connectionId, name });
 
 export type ExecShell = "/bin/sh" | "/bin/bash";
 

@@ -11,7 +11,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::connections::{self, ConnectionInfo};
-use crate::docker::{self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, PortMapping};
+use crate::docker::{
+    self, ContainerDetail, ContainerInfo, ExecInput, ImageInfo, NetworkInfo, PortMapping,
+};
 
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -133,6 +135,27 @@ pub async fn pull_image(
         let _ = app.emit(&event, progress);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_networks(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<NetworkInfo>, String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::list_networks(&client).await
+}
+
+#[tauri::command]
+pub async fn remove_network(
+    app: tauri::AppHandle,
+    connection_id: String,
+    name: String,
+) -> Result<(), String> {
+    let info = connections::get(&store_dir(&app)?, &connection_id)?;
+    let client = docker::client_for(&info)?;
+    docker::remove_network(&client, &name).await
 }
 
 /// Tracks the in-flight log-follow task per container so a new "Logs" click

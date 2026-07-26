@@ -8,14 +8,17 @@ import {
   listConnections,
   listContainers,
   listImages,
+  listNetworks,
   pullImage,
   removeImage,
+  removeNetwork,
   saveConnection,
   testConnection,
   type ConnectionInfo,
   type ContainerAction,
   type ContainerInfo,
   type ImageInfo,
+  type NetworkInfo,
   type PortMapping,
   type PullProgress,
 } from "./api";
@@ -26,15 +29,18 @@ import ContainerTable from "./components/ContainerTable.vue";
 import CreateContainerDialog from "./components/CreateContainerDialog.vue";
 import ExecTerminal from "./components/ExecTerminal.vue";
 import ImageTable from "./components/ImageTable.vue";
+import NetworkTable from "./components/NetworkTable.vue";
 import TaskLogPanel from "./components/TaskLogPanel.vue";
 
 const connections = ref<ConnectionInfo[]>([]);
 const activeId = ref<string | null>(null);
-const view = ref<"containers" | "images">("containers");
+const view = ref<"containers" | "images" | "networks">("containers");
 const containers = ref<ContainerInfo[]>([]);
 const images = ref<ImageInfo[]>([]);
+const networks = ref<NetworkInfo[]>([]);
 const busy = ref(false);
 const imagesBusy = ref(false);
+const networksBusy = ref(false);
 const error = ref("");
 const taskLog = ref<string[]>([]);
 const logsContainerId = ref<string | null>(null);
@@ -78,6 +84,20 @@ async function refreshImages() {
   }
 }
 
+async function refreshNetworks() {
+  if (!activeId.value) return;
+  networksBusy.value = true;
+  error.value = "";
+  try {
+    networks.value = await listNetworks(activeId.value);
+  } catch (e) {
+    error.value = String(e);
+    networks.value = [];
+  } finally {
+    networksBusy.value = false;
+  }
+}
+
 async function onSelect(id: string) {
   activeId.value = id;
   logsContainerId.value = null;
@@ -85,11 +105,27 @@ async function onSelect(id: string) {
   detailContainerId.value = null;
   await refreshContainers();
   if (view.value === "images") await refreshImages();
+  if (view.value === "networks") await refreshNetworks();
 }
 
-async function onSwitchView(next: "containers" | "images") {
+async function onSwitchView(next: "containers" | "images" | "networks") {
   view.value = next;
   if (next === "images") await refreshImages();
+  if (next === "networks") await refreshNetworks();
+}
+
+async function onRemoveNetwork(name: string) {
+  if (!activeId.value) return;
+  networksBusy.value = true;
+  try {
+    await removeNetwork(activeId.value, name);
+    logTask(`remove network ${name} — ok`);
+  } catch (e) {
+    logTask(`remove network ${name} — failed: ${e}`);
+  } finally {
+    networksBusy.value = false;
+  }
+  await refreshNetworks();
 }
 
 function onLogs(containerId: string) {
@@ -224,6 +260,12 @@ onMounted(refreshConnections);
           >
             Images
           </button>
+          <button
+            :class="{ active: view === 'networks' }"
+            @click="onSwitchView('networks')"
+          >
+            Networks
+          </button>
         </nav>
         <button
           v-if="view === 'containers'"
@@ -233,9 +275,16 @@ onMounted(refreshConnections);
           Refresh
         </button>
         <button
-          v-else
+          v-else-if="view === 'images'"
           :disabled="!activeId || imagesBusy"
           @click="refreshImages"
+        >
+          Refresh
+        </button>
+        <button
+          v-else
+          :disabled="!activeId || networksBusy"
+          @click="refreshNetworks"
         >
           Refresh
         </button>
@@ -268,6 +317,12 @@ onMounted(refreshConnections);
         @pull="onPull"
         @remove="onRemoveImage"
         @run="runImage = $event"
+      />
+      <NetworkTable
+        v-else-if="activeId && view === 'networks'"
+        :networks="networks"
+        :busy="networksBusy"
+        @remove="onRemoveNetwork"
       />
       <CreateContainerDialog
         v-if="activeId && view === 'images' && runImage"

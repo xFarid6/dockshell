@@ -6,10 +6,6 @@
 fn lists_and_removes_volumes() {}
 
 #[test]
-#[ignore = "not implemented — network management, see dockshell issue #5"]
-fn lists_and_inspects_networks() {}
-
-#[test]
 #[ignore = "not implemented — compose file support, see dockshell issue #6"]
 fn compose_up_from_file() {}
 
